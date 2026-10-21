@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
 const core = require('./cms-ssp-placement-bulk-upload.user.js');
 
 const TYPE_LIST = [
@@ -11,6 +13,169 @@ const TYPE_LIST = [
     { id: 'type-native', name: 'Native' },
     { id: 'type-splash', name: 'Splash' }
 ];
+
+class FakeElement {
+    constructor(tagName, options) {
+        const opts = options || {};
+        this.tagName = String(tagName || 'div').toUpperCase();
+        this.className = opts.className || '';
+        this.textContent = opts.textContent || '';
+        this.children = [];
+        this.parentElement = null;
+        this.id = '';
+        this.type = '';
+        this.hidden = false;
+        this._innerHTML = '';
+    }
+
+    set innerHTML(value) {
+        this._innerHTML = String(value);
+        this.textContent = this._innerHTML.replace(/<[^>]*>/g, '');
+    }
+
+    get innerHTML() {
+        return this._innerHTML;
+    }
+
+    appendChild(child) {
+        child.parentElement = this;
+        this.children.push(child);
+        return child;
+    }
+
+    append() {
+        Array.from(arguments).forEach((child) => this.appendChild(child));
+    }
+
+    insertAdjacentElement(position, child) {
+        assert.equal(position, 'afterend');
+        const siblings = this.parentElement.children;
+        child.parentElement = this.parentElement;
+        siblings.splice(siblings.indexOf(this) + 1, 0, child);
+        return child;
+    }
+
+    remove() {
+        if (!this.parentElement) {
+            return;
+        }
+        const siblings = this.parentElement.children;
+        siblings.splice(siblings.indexOf(this), 1);
+        this.parentElement = null;
+    }
+
+    addEventListener() {}
+
+    getClientRects() {
+        return this.hidden ? [] : [{}];
+    }
+
+    matches(selector) {
+        if (selector === '.appic-sp-show-row') {
+            return this.className.split(/\s+/).includes('appic-sp-show-row');
+        }
+        if (selector === 'button.el-button') {
+            return this.tagName === 'BUTTON' && this.className.split(/\s+/).includes('el-button');
+        }
+        if (selector === 'button') {
+            return this.tagName === 'BUTTON';
+        }
+        if (selector === '.appic-table-toolbar' || selector === '.vxe-toolbar') {
+            return this.className.split(/\s+/).includes(selector.slice(1));
+        }
+        return false;
+    }
+
+    closest(selector) {
+        let current = this;
+        while (current) {
+            if (current.matches(selector)) {
+                return current;
+            }
+            current = current.parentElement;
+        }
+        return null;
+    }
+
+    querySelectorAll(selector) {
+        const selectors = selector.split(',').map((item) => item.trim());
+        const output = [];
+        const visit = (node) => {
+            node.children.forEach((child) => {
+                if (selectors.some((item) => child.matches(item))) {
+                    output.push(child);
+                }
+                visit(child);
+            });
+        };
+        visit(this);
+        return output;
+    }
+
+    querySelector(selector) {
+        return this.querySelectorAll(selector)[0] || null;
+    }
+}
+
+function createInjectionHarness(options) {
+    const opts = options || {};
+    const documentElement = new FakeElement('html');
+    const head = documentElement.appendChild(new FakeElement('head'));
+    const body = documentElement.appendChild(new FakeElement('body'));
+    const panel = body.appendChild(new FakeElement('section', {
+        className: 'appic-sp-show-row',
+        textContent: '应用 广告位名称 结算模式'
+    }));
+    const toolbar = panel.appendChild(new FakeElement('div', { className: 'appic-table-toolbar' }));
+    toolbar.appendChild(new FakeElement('button', {
+        className: 'el-button',
+        textContent: opts.nativeActionLabel || '查询'
+    }));
+
+    const document = {
+        readyState: 'complete',
+        documentElement,
+        head,
+        body,
+        cookie: '',
+        createElement: (tagName) => new FakeElement(tagName),
+        addEventListener() {},
+        querySelectorAll: (selector) => documentElement.querySelectorAll(selector),
+        getElementById(id) {
+            let found = null;
+            const visit = (node) => {
+                if (node.id === id) {
+                    found = node;
+                    return;
+                }
+                node.children.forEach((child) => {
+                    if (!found) {
+                        visit(child);
+                    }
+                });
+            };
+            visit(documentElement);
+            return found;
+        }
+    };
+    const win = {
+        document,
+        location: {
+            hostname: 'cms.apicmob.com',
+            hash: '#/ssp/media-details?id=publisher-1&interface=sdk'
+        },
+        history: {
+            pushState() {},
+            replaceState() {}
+        },
+        addEventListener() {},
+        setInterval() { return 1; },
+        setTimeout(callback) { callback(); return 1; },
+        clearTimeout() {},
+        alert() {}
+    };
+    return { document, panel, toolbar, win };
+}
 
 function validMatrix() {
     return [
@@ -22,6 +187,30 @@ function validMatrix() {
         ['Launch', 'splash', 'cpm', 3, '', '']
     ];
 }
+
+test('injects the bulk upload button when the native add button is unavailable', () => {
+    const harness = createInjectionHarness({ nativeActionLabel: '查询' });
+
+    core.boot(harness.win);
+
+    assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
+});
+
+test('boots in a browser even when the page exposes CommonJS globals', () => {
+    const harness = createInjectionHarness({ nativeActionLabel: '新增' });
+    const source = fs.readFileSync(require.resolve('./cms-ssp-placement-bulk-upload.user.js'), 'utf8');
+    const context = {
+        module: { exports: {} },
+        window: harness.win,
+        URL,
+        URLSearchParams,
+        console
+    };
+
+    vm.runInNewContext(source, context);
+
+    assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
+});
 
 test('normalizes all supported types and applies fixed sizes', () => {
     const rows = core.normalizeRows(validMatrix(), { prefix: 'Loklok', appName: 'Fallback' });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS SDK 广告位批量上传
 // @namespace    https://cms.apicmob.com/
-// @version      1.0.0
+// @version      1.0.1
 // @description  在 SSP 媒体详情的 SDK 广告位页按 Excel 批量创建、配置结算规则并启用广告位
 // @author       liulifeng
 // @match        https://cms.apicmob.com/*
@@ -13,11 +13,11 @@
     'use strict';
 
     const core = factory();
-    if (typeof module === 'object' && module.exports) {
+    if (typeof window !== 'undefined' && window.document) {
+        core.boot(window);
+    } else if (typeof module === 'object' && module.exports) {
         module.exports = core;
-        return;
     }
-    core.boot(window);
 })(function () {
     'use strict';
 
@@ -555,16 +555,45 @@
             return cleanText(element && element.textContent) === text;
         }
 
+        function isPlacementPanel(element) {
+            const content = cleanText(element && element.textContent).toLowerCase();
+            const chinese = content.includes('广告位名称')
+                && (content.includes('结算模式') || content.includes('广告类型'));
+            const english = content.includes('placement name')
+                && (content.includes('settlement mode') || content.includes('placement type'));
+            return !!element && isVisible(element) && (chinese || english);
+        }
+
         function findPlacementTable() {
-            const addButtons = Array.from(win.document.querySelectorAll('button.el-button'))
-                .filter((item) => exactText(item, '添加') && isVisible(item));
-            for (let index = 0; index < addButtons.length; index += 1) {
-                const table = addButtons[index].closest('.appic-sp-show-row');
-                const content = cleanText(table && table.textContent);
-                if (table && content.includes('广告位名称') && content.includes('结算模式')) {
-                    return { table, addButton: addButtons[index] };
-                }
+            const panelSelectors = ['.appic-sp-show-row', '.appic-table', '.vxe-grid', '.el-card'];
+            const panels = [];
+            const seen = new Set();
+            panelSelectors.forEach((selector) => {
+                Array.from(win.document.querySelectorAll(selector)).forEach((panel) => {
+                    if (!seen.has(panel) && isPlacementPanel(panel)) {
+                        seen.add(panel);
+                        panels.push(panel);
+                    }
+                });
+            });
+
+            for (let index = 0; index < panels.length; index += 1) {
+                const table = panels[index];
+                const buttons = Array.from(table.querySelectorAll('button')).filter(isVisible);
+                const addButton = buttons.find((item) => (
+                    ['添加', '新增', '新建', 'add', 'create'].includes(cleanText(item.textContent).toLowerCase())
+                ));
+                const queryButton = buttons.find((item) => (
+                    ['查询', '搜索', 'query', 'search'].includes(cleanText(item.textContent).toLowerCase())
+                ));
+                const toolbar = table.querySelector('.appic-table-toolbar, .vxe-toolbar');
+                const actionHost = (addButton && addButton.parentElement)
+                    || (queryButton && queryButton.parentElement)
+                    || toolbar
+                    || table;
+                return { table, addButton: addButton || null, actionHost };
             }
+
             return null;
         }
 
@@ -1140,8 +1169,10 @@
                 });
                 button.id = BTN_ID;
             }
-            if (button.parentElement !== placement.addButton.parentElement) {
+            if (placement.addButton && button.parentElement !== placement.addButton.parentElement) {
                 placement.addButton.insertAdjacentElement('afterend', button);
+            } else if (!placement.addButton && button.parentElement !== placement.actionHost) {
+                placement.actionHost.appendChild(button);
             }
         }
 

@@ -135,7 +135,7 @@
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.1</span></footer>
             </main>`;
 
         function render(next) {

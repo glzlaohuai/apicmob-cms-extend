@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.1.0
+// @version      1.1.1
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传和 SDK 配置总览布局，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -144,7 +144,7 @@ function createCmsExtensions() {
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.1</span></footer>
             </main>`;
 
         function render(next) {
@@ -2741,6 +2741,9 @@ function createSdkConfigOverviewLayout() {
     const STYLE_ID = 'apicmob-sdk-config-overview-layout';
     const ATTRIBUTE = 'data-apicmob-sdk-overview-layout';
     const HEADER = `.app-info[${ATTRIBUTE}]`;
+    const PANEL_CLASS = 'apicmob-sdk-activity-min-panel';
+    const PANEL = `.${PANEL_CLASS}`;
+    const NATIVE_CONTROL = ':scope > .row > .activity-min-item';
     const CSS = `
         ${HEADER} {
             display: grid !important;
@@ -2761,18 +2764,24 @@ function createSdkConfigOverviewLayout() {
         ${HEADER} > .row:nth-child(2) > div {
             grid-row: 2;
         }
-        ${HEADER} > .row > .activity-min-item {
-            grid-column: 1 / -1;
-            grid-row: 3;
+        ${PANEL}.appic-table-form-header {
+            margin-top: 20px;
+            padding: 20px 40px !important;
+            color: #606266;
+        }
+        ${PANEL} > .activity-min-item {
             display: flex !important;
             align-items: center;
             flex-wrap: wrap;
             gap: 8px;
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
-        ${HEADER} .activity-min-input {
+        ${PANEL} .activity-min-input {
+            width: 110px;
             flex: 0 0 110px;
         }
-        ${HEADER} .activity-min-item > .el-button + .el-button {
+        ${PANEL} .activity-min-item > .el-button + .el-button {
             margin-left: 0;
         }
         @media (max-width: 700px) {
@@ -2788,10 +2797,10 @@ function createSdkConfigOverviewLayout() {
             ${HEADER} > .row:nth-child(2) > div:nth-child(2) {
                 grid-row: 4;
             }
-            ${HEADER} > .row > .activity-min-item {
-                grid-row: 5;
+            ${PANEL}.appic-table-form-header {
+                padding: 20px !important;
             }
-            ${HEADER} .activity-min-item > span:first-child {
+            ${PANEL} .activity-min-item > span:first-child {
                 flex-basis: 100%;
             }
         }
@@ -2800,23 +2809,71 @@ function createSdkConfigOverviewLayout() {
     function boot(win, runtime) {
         const document = win.document;
         const featureEnabled = runtime && runtime.isEnabled ? runtime.isEnabled : () => true;
+        const placements = new Map();
+        let observer = null;
+
+        function release(placement, restore = true) {
+            const { header, control, placeholder, panel } = placement;
+            if (restore && placeholder.parentNode) {
+                placeholder.replaceWith(control);
+            } else {
+                placeholder.remove();
+            }
+            panel.remove();
+            header.removeAttribute(ATTRIBUTE);
+            placements.delete(header);
+        }
 
         function updateLayout() {
             const active = featureEnabled()
                 && /^#\/sdk\/config\/overview\/?(?:\?|$)/.test(win.location.hash);
-            const headers = new Set(active
-                ? Array.from(document.querySelectorAll('.app-info')).filter((header) =>
-                    header.querySelector(':scope > .row > .activity-min-item'))
-                : []);
+            if (!active) {
+                if (observer) {
+                    observer.disconnect();
+                    observer = null;
+                }
+                placements.forEach((placement) => release(placement));
+                const style = document.getElementById(STYLE_ID);
+                if (style) style.remove();
+                return;
+            }
 
-            document.querySelectorAll(HEADER).forEach((header) => {
-                if (!headers.has(header)) {
-                    header.removeAttribute(ATTRIBUTE);
+            if (!observer) {
+                observer = new win.MutationObserver(updateLayout);
+                observer.observe(document.body, { childList: true, subtree: true });
+            }
+
+            placements.forEach((placement) => {
+                const { header, control, placeholder, panel } = placement;
+                if (!header.isConnected || !header.contains(placeholder)) {
+                    release(placement);
+                } else if (header.querySelector(NATIVE_CONTROL) || !panel.contains(control)) {
+                    release(placement, false);
+                } else if (header.nextElementSibling !== panel) {
+                    header.after(panel);
                 }
             });
 
+            document.querySelectorAll('.app-info').forEach((header) => {
+                if (placements.has(header)) return;
+                const control = header.querySelector(NATIVE_CONTROL);
+                if (!control) return;
+
+                // Keep an anchor so the original Vue-owned element can return to its exact position.
+                const placeholder = document.createComment('apicmob-sdk-activity-min');
+                const panel = document.createElement('div');
+                panel.className = `appic-table-form-header ${PANEL_CLASS}`;
+                panel.setAttribute('role', 'group');
+                panel.setAttribute('aria-label', '正式模式版本活跃度');
+                control.before(placeholder);
+                panel.appendChild(control);
+                header.after(panel);
+                header.setAttribute(ATTRIBUTE, '');
+                placements.set(header, { header, control, placeholder, panel });
+            });
+
             const style = document.getElementById(STYLE_ID);
-            if (!headers.size) {
+            if (!placements.size) {
                 if (style) style.remove();
                 return;
             }
@@ -2827,11 +2884,6 @@ function createSdkConfigOverviewLayout() {
                 nextStyle.textContent = CSS;
                 document.head.appendChild(nextStyle);
             }
-            headers.forEach((header) => {
-                if (!header.hasAttribute(ATTRIBUTE)) {
-                    header.setAttribute(ATTRIBUTE, '');
-                }
-            });
         }
 
         function init() {

@@ -18,7 +18,7 @@
     } else if (typeof module === 'object' && module.exports) {
         module.exports = core;
     }
-})(function () {
+})(function createPlacementBulkUpload() {
     'use strict';
 
     const HEADERS = ['名称', '广告类型', '结算模式', '固定价格', '最低价格', '最高价格'];
@@ -428,7 +428,7 @@
         return body && Array.isArray(body.data) ? body.data : [];
     }
 
-    function boot(win) {
+    function boot(win, runtime) {
         const API_HOST = 'https://cms-ssp-api.apicmob.com/api';
         const FALLBACK_VERSION = '8.2.34';
         const ROUTE_PATH = '/ssp/media-details';
@@ -438,6 +438,8 @@
         let sniffedVersion = '';
         let button = null;
         let running = false;
+        let preserveResult = false;
+        const featureEnabled = runtime && runtime.isEnabled ? runtime.isEnabled : () => true;
 
         const esc = (value) => cleanText(value).replace(/[&<>"']/g, (char) => (
             { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]
@@ -739,6 +741,7 @@
             if (modal) {
                 modal.remove();
             }
+            preserveResult = false;
         }
 
         function createModal(title) {
@@ -1022,7 +1025,7 @@
             });
 
             async function executeReadyRows() {
-                if (running) {
+                if (running || !featureEnabled()) {
                     return;
                 }
                 setMessage('正在重新检查已有广告位…', false);
@@ -1043,6 +1046,9 @@
                 }
 
                 const ready = state.rows.filter((row) => row.status === 'ready');
+                if (!featureEnabled()) {
+                    return;
+                }
                 if (!ready.length) {
                     setMessage('重新检查后没有可创建的广告位。', true);
                     refreshExecuteButton();
@@ -1053,6 +1059,7 @@
                 }
 
                 running = true;
+                preserveResult = true;
                 closeButton.disabled = true;
                 ui.close.disabled = true;
                 prefixInput.disabled = true;
@@ -1113,7 +1120,7 @@
         }
 
         async function startFlow() {
-            if (running) {
+            if (running || !featureEnabled()) {
                 return;
             }
             const placement = findPlacementTable();
@@ -1150,7 +1157,7 @@
         }
 
         function ensureButton() {
-            if (!isTargetPage()) {
+            if (!featureEnabled() || !isTargetPage()) {
                 if (button && button.parentElement) {
                     button.remove();
                 }
@@ -1178,10 +1185,18 @@
 
         function tick() {
             ensureButton();
+            if (!featureEnabled() && !running && !preserveResult) {
+                closeModal(false);
+            }
         }
 
         function init() {
             if (win.location.hostname !== 'cms.apicmob.com') {
+                return;
+            }
+            if (runtime && runtime.watch) {
+                runtime.watch(tick);
+                tick();
                 return;
             }
             ['pushState', 'replaceState'].forEach((method) => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 模组配置「套用模板」
 // @namespace    https://cms.apicmob.com/
-// @version      1.0.0
+// @version      1.1.1
 // @description  在模组配置编辑页右上角新增「套用模板」：按新模组模版重建模组，把旧配置的值平移过去，并列出被删除 / 需额外配置的项
 // @author       liulifeng
 // @match        https://cms.apicmob.com/*
@@ -9,7 +9,16 @@
 // @run-at       document-start
 // ==/UserScript==
 
-(function () {
+(function (factory) {
+    'use strict';
+
+    const core = factory();
+    if (typeof window !== 'undefined' && window.document) {
+        core.boot();
+    } else if (typeof module === 'object' && module.exports) {
+        module.exports = core;
+    }
+})(function createModuleApplyTemplate() {
     'use strict';
 
     // ===================== 常量 =====================
@@ -24,6 +33,7 @@
 
     const ROUTE_PATH = '/system/custom-configuration/module-edit';
     const TYPE_H5_LINK = 'SdkH5ManageLinkConfiguration';
+    const TYPE_SDK_OVERVIEW = 'sdk_overview';
 
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const REPORT_KEY = 'apicmob-apply-template::report';
@@ -32,6 +42,7 @@
     const BTN_ID = 'apicmob-apply-template-btn';
     const MODAL_ID = 'apicmob-apply-template-modal';
     const PANEL_ID = 'apicmob-apply-template-panel';
+    let featureEnabled = () => true;
 
     // 这些类型在配置里是「容器」，没有自己的 field_value
     const CONTAINER_TYPES = ['object', 'object_array'];
@@ -132,6 +143,10 @@
             if (rewritten.has(xhr)) {
                 return rewritten.get(xhr);
             }
+            // A migration already in progress must survive a settings change.
+            if (!featureEnabled() && !readSession(PENDING_KEY)) {
+                return raw;
+            }
 
             const url = xhr.responseURL || '';
             if (url.indexOf('/cms2/system/module_config/detail') < 0) {
@@ -146,8 +161,7 @@
                 sessionStorage.removeItem(PENDING_KEY);
                 return raw;
             }
-            if (url.indexOf('id=' + encodeURIComponent(pending.moduleId)) < 0
-                && url.indexOf('id=' + pending.moduleId) < 0) {
+            if (new URL(url).searchParams.get('id') !== String(pending.moduleId)) {
                 return raw;
             }
 
@@ -155,7 +169,7 @@
             try {
                 const body = JSON.parse(raw);
                 const fieldList = body && body.result && body.result.field_list;
-                if (Array.isArray(fieldList)) {
+                if ((body.code === 200 || body.code === 0) && Array.isArray(fieldList)) {
                     // 只改值，绝不动结构：节点 id / children_object_array 的骨架全是服务端原生的
                     const report = migrateValues(pending.oldFieldList || [], fieldList);
                     out = JSON.stringify(body);
@@ -209,8 +223,6 @@
         });
     }
 
-    installXhrHooks();
-
     // ===================== API =====================
 
     async function request(host, path, options) {
@@ -263,7 +275,10 @@
         moduleAdd: (data) => request(CMS_API, '/cms2/system/module_config/add', { data }),
         h5LinkAll: () => request(SDK_API, '/cms2/sdk/h5/link/all'),
         h5ModuleDelete: (linkId) => request(SDK_API, '/cms2/sdk/h5/module_config/delete', { data: { id: linkId } }),
-        h5ModuleAdd: (data) => request(SDK_API, '/cms2/sdk/h5/module_config/add', { data })
+        h5ModuleAdd: (data) => request(SDK_API, '/cms2/sdk/h5/module_config/add', { data }),
+        sdkConfigDetail: (id) => request(SDK_API, '/cms2/sdk/config/detail', { params: { id } }),
+        sdkModuleDelete: (configId) => request(SDK_API, '/cms2/sdk/config/module_config/delete', { data: { id: configId } }),
+        sdkModuleAdd: (data) => request(SDK_API, '/cms2/sdk/config/module_config/add', { data })
     };
 
     const listOf = (body) => (body && body.result && Array.isArray(body.result.list) ? body.result.list : []);
@@ -460,7 +475,7 @@
             .aat-bd { padding: 18px 20px; overflow: auto; flex: 1; line-height: 1.7; }
             .aat-ft {
                 padding: 12px 20px; border-top: 1px solid #ebeef5;
-                display: flex; justify-content: flex-end; gap: 10px;
+                display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;
             }
             .aat-row { margin-bottom: 14px; }
             .aat-label { display: block; margin-bottom: 6px; color: #606266; font-weight: 600; }
@@ -472,6 +487,7 @@
             .aat-btn {
                 padding: 8px 18px; border-radius: 16px; border: 1px solid #dcdfe6;
                 background: #fff; color: #606266; cursor: pointer; font-size: 13px;
+                white-space: nowrap;
             }
             .aat-btn:hover { color: #1677ff; border-color: #b6cefa; }
             .aat-btn[disabled] { cursor: not-allowed; opacity: .5; }
@@ -501,7 +517,7 @@
             .aat-err { color: #cf1322; white-space: pre-wrap; }
 
             #${PANEL_ID} {
-                position: fixed; right: 20px; bottom: 20px; width: 340px;
+                position: fixed; right: 20px; bottom: 20px; width: 340px; max-width: calc(100vw - 40px);
                 z-index: 2147483645; background: #fff;
                 border: 1px solid #d4d4d4; border-radius: 6px;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -557,10 +573,14 @@
     // ===================== 弹窗 =====================
 
     function closeModal() {
+        if (applying) {
+            return;
+        }
         const el = document.getElementById(MODAL_ID);
         if (el) {
             el.remove();
         }
+        preserveResult = false;
     }
 
     function openModal(title) {
@@ -602,6 +622,9 @@
 
     // ===================== 主流程 =====================
 
+    let applying = false;
+    let preserveResult = false;
+
     /** 分页拉取模组配置行。注意 CMS 的 keyword 是服务端模糊搜索，调用方必须再做一次精确比较 */
     async function listModuleRows(keyword) {
         const all = [];
@@ -615,23 +638,39 @@
         return all;
     }
 
+    async function findSdkConfigRow(configId) {
+        // config/all 必须带 supply_app_id；详情接口可直接按父配置 id 核对关联。
+        const body = await api.sdkConfigDetail(configId);
+        const row = body.result;
+        if (!row || typeof row !== 'object' || Array.isArray(row)) {
+            throw new Error('SDK 配置详情返回格式异常，无法核对模组关联。');
+        }
+        return String(row.id) === String(configId) ? row : null;
+    }
+
     async function startFlow() {
+        if (applying || !featureEnabled()) {
+            return;
+        }
         const query = routeQuery();
         const oldModuleId = query.id;
-        const oldName = query.name ? decodeURIComponent(query.name) : '';
+        const oldName = query.name || '';
         const linkId = query.delid || '';
         const type = query.type || '';
+        const isSdk = type === TYPE_SDK_OVERVIEW;
+        const destructive = type === TYPE_H5_LINK || isSdk;
 
         if (!oldModuleId) {
             alert('[套用模板] 当前 URL 里没有模组 id，无法继续。');
             return;
         }
-        if (type && type !== TYPE_H5_LINK) {
+        if (type && !destructive) {
             const ui = openModal('套用模板 — 暂不支持');
-            ui.body.innerHTML = `<div class="aat-warn">当前模组挂载类型是 <b>${esc(type)}</b>，v1 暂不支持。</div>
-                <p>脚本目前只验证过两条路径：</p>
+            ui.body.innerHTML = `<div class="aat-warn">当前模组挂载类型是 <b>${esc(type)}</b>，暂不支持。</div>
+                <p>脚本目前支持：</p>
                 <ul>
                     <li><b>${esc(TYPE_H5_LINK)}</b>（H5 链接）— 解绑 + 按模板重绑</li>
+                    <li><b>${esc(TYPE_SDK_OVERVIEW)}</b>（SDK 配置）— 解绑 + 按模板重绑</li>
                     <li>URL 不带 <code>type</code> 的独立模组 — 直接新建，非破坏性</li>
                 </ul>
                 <p>其它挂载类型各有自己的 <code>module_config/add</code> 接口，payload 未经验证，贸然调用有风险，因此先不放开。</p>`;
@@ -640,6 +679,11 @@
         }
 
         const ui = openModal('套用模板');
+        if (destructive && !linkId) {
+            ui.body.innerHTML = '<div class="aat-warn aat-err">当前 URL 里没有关联配置 id（delid），无法继续。</div>';
+            footerButton(ui.footer, '关闭', '', closeModal);
+            return;
+        }
         ui.body.innerHTML = '<div class="aat-empty">正在加载模板列表与当前配置…</div>';
 
         let templates;
@@ -659,8 +703,12 @@
 
         const currentTplId = detail.module_config_template_id || '';
         const oldFieldList = Array.isArray(detail.field_list) ? detail.field_list : [];
-        const displayName = detail.name || oldName || '(未命名)';
-
+        const displayName = typeof detail.name === 'string' && detail.name.trim() ? detail.name : oldName;
+        if (!displayName.trim()) {
+            ui.body.innerHTML = '<div class="aat-warn aat-err">无法取得原配置名称，已停止套用模板。</div>';
+            footerButton(ui.footer, '关闭', '', closeModal);
+            return;
+        }
         renderStep1();
 
         function renderStep1() {
@@ -668,40 +716,36 @@
             ui.body.innerHTML = `
                 <div class="aat-tip">
                     当前模组：<b>${esc(displayName)}</b><br>
+                    套用后配置名称保持不变。<br>
                     迁移<b>以已保存的配置为准</b>，页面上未保存的手动修改不会被带过去。
                 </div>
                 <div class="aat-row">
                     <label class="aat-label">目标模组模版</label>
                     <select class="aat-select" id="aat-tpl">
                         <option value="">请选择…</option>
-                        ${templates.map((t) => `<option value="${esc(t.id)}"${t.id === currentTplId ? ' disabled' : ''}>${esc(t.name)}${t.id === currentTplId ? '（当前）' : ''}</option>`).join('')}
+                        ${templates.map((t) => `<option value="${esc(t.id)}"${String(t.id) === String(currentTplId) ? ' disabled' : ''}>${esc(t.name)}${String(t.id) === String(currentTplId) ? '（当前）' : ''}</option>`).join('')}
                     </select>
-                </div>
-                <div class="aat-row">
-                    <label class="aat-label">新模组名称</label>
-                    <input class="aat-input" id="aat-name" value="${esc(displayName)}">
                 </div>`;
 
             const select = ui.body.querySelector('#aat-tpl');
-            const nameInput = ui.body.querySelector('#aat-name');
+            const selectedTemplate = () => templates.find((t) => String(t.id) === select.value
+                && String(t.id) !== String(currentTplId));
 
             select.addEventListener('change', () => {
-                const tpl = templates.find((t) => t.id === select.value);
-                nameInput.value = tpl ? `${displayName}-${tpl.name}` : displayName;
-                next.disabled = !select.value;
+                next.disabled = !selectedTemplate();
             });
 
             footerButton(ui.footer, '取消', '', closeModal);
             const next = footerButton(ui.footer, '预览变更', 'aat-btn-primary', () => {
-                const tpl = templates.find((t) => t.id === select.value);
+                const tpl = selectedTemplate();
                 if (tpl) {
-                    renderStep2(tpl, nameInput.value.trim() || displayName);
+                    return renderStep2(tpl);
                 }
             });
             next.disabled = true;
         }
 
-        async function renderStep2(template, newName) {
+        async function renderStep2(template) {
             ui.footer.innerHTML = '';
             ui.body.innerHTML = '<div class="aat-empty">正在拉取模板字段树并比对…</div>';
 
@@ -722,17 +766,15 @@
 
             // 预览阶段用模板树预估；真正的报告会在新模组建好后用服务端返回的真实结构重算
             const diff = diffSkeleton(oldFieldList, 'module', tplFields, 'template');
-            const destructive = type === TYPE_H5_LINK;
-
             ui.body.innerHTML = `
                 <div class="aat-tip">
-                    <b>${esc(displayName)}</b> → 模板 <b>${esc(template.name)}</b>，新模组名 <b>${esc(newName)}</b>
+                    <b>${esc(displayName)}</b> → 模板 <b>${esc(template.name)}</b>，配置名称保持不变。
                 </div>
                 ${destructive ? `<div class="aat-warn">
                     <b>破坏性操作。</b>CMS 没有「换模板」接口，只能解绑后按新模板重绑。
                     解绑走的是页面上「解除关联」那颗按钮背后的
-                    <code>/cms2/sdk/h5/module_config/delete</code>，其确认文案是「是否确认删除该模组配置?」，
-                    且整个前端不存在能把已有模组重新挂回链接的接口——<b>请按旧模组会被永久删除、不可回滚来对待</b>。
+                    <code>/cms2/sdk/${isSdk ? 'config' : 'h5'}/module_config/delete</code>，其确认文案是「是否确认删除该模组配置?」。
+                    <b>请按旧模组会被永久删除、不可回滚来对待</b>。
                     下一步会先把旧配置下载到本地做备份。
                 </div>` : `<div class="aat-tip">
                     当前模组不挂在任何链接上，走非破坏性路径：<b>新建一个独立模组，旧模组原样保留</b>。
@@ -749,57 +791,73 @@
             });
             footerButton(ui.footer, destructive ? '下一步：确认并执行' : '执行',
                 destructive ? 'aat-btn-danger' : 'aat-btn-primary',
-                () => (destructive ? renderStep3(template, newName) : execute(template, newName)));
+                () => (destructive ? renderStep3(template) : execute(template)));
         }
 
-        async function renderStep3(template, newName) {
+        async function attachedRow() {
+            const row = isSdk ? await findSdkConfigRow(linkId)
+                : listOf(await api.h5LinkAll()).find((r) => String(r.id) === String(linkId));
+            if (!row) {
+                throw new Error(`找不到 id 为「${linkId}」的${isSdk ? 'SDK 配置' : 'H5 链接'}，无法继续。`);
+            }
+            if (String(row.module_config_id || '') !== String(oldModuleId)) {
+                throw new Error('当前关联模组与页面不一致，已停止执行。请刷新 CMS 后重试。');
+            }
+            return row;
+        }
+
+        async function renderStep3(template) {
             ui.footer.innerHTML = '';
-            ui.body.innerHTML = '<div class="aat-empty">正在读取链接信息…</div>';
+            ui.body.innerHTML = '<div class="aat-empty">正在核对模组关联…</div>';
 
             let linkRow;
             try {
-                linkRow = listOf(await api.h5LinkAll()).find((r) => String(r.id) === String(linkId));
+                linkRow = await attachedRow();
             } catch (e) {
                 ui.body.innerHTML = `<div class="aat-warn aat-err">${esc(e.message)}</div>`;
-                footerButton(ui.footer, '返回', '', () => renderStep2(template, newName));
+                footerButton(ui.footer, '返回', '', () => renderStep2(template));
                 return;
             }
 
-            if (!linkRow) {
-                ui.body.innerHTML = `<div class="aat-warn">在 H5 链接列表里找不到 id 为 <code>${esc(linkId)}</code> 的链接，无法继续。</div>`;
-                footerButton(ui.footer, '返回', '', () => renderStep2(template, newName));
+            const confirmation = isSdk ? linkId : String(linkRow.lid || '');
+            if (!confirmation) {
+                ui.body.innerHTML = '<div class="aat-warn aat-err">H5 链接缺少 lid，无法确认操作。</div>';
+                footerButton(ui.footer, '返回', '', () => renderStep2(template));
                 return;
             }
-
-            const lid = String(linkRow.lid || '');
-
-            // 先把备份落盘，再让用户手输 lid 确认——沿用同仓库 user-cleaner 的「输入确认」范式
             downloadJSON(`module-config-backup-${oldModuleId}.json`, detail);
             window.open(`${CMS_API}/cms2/system/module_config/export?id=${encodeURIComponent(oldModuleId)}`, '_blank');
 
             ui.body.innerHTML = `
                 <div class="aat-warn">
-                    即将对链接 <b>${esc(lid)}</b> 执行：<br>
+                    即将对${isSdk ? ' SDK 配置' : '链接'} <b>${esc(confirmation)}</b> 执行：<br>
                     1. 解绑并删除旧模组「${esc(displayName)}」<b>（不可恢复）</b><br>
-                    2. 按模板「${esc(template.name)}」绑定新模组「${esc(newName)}」<br><br>
+                    2. 按模板「${esc(template.name)}」绑定新模组，名称保持「${esc(displayName)}」<br><br>
                     旧配置的 JSON 备份已开始下载，官方导出也已在新标签页打开。
                 </div>
                 <div class="aat-row">
-                    <label class="aat-label">请手动输入该链接的 lid「${esc(lid)}」以确认</label>
-                    <input class="aat-input" id="aat-confirm" placeholder="输入 ${esc(lid)}" autocomplete="off">
+                    <label class="aat-label">请手动输入${isSdk ? ' SDK 配置 ID' : '该链接的 lid'}「${esc(confirmation)}」以确认</label>
+                    <input class="aat-input" id="aat-confirm" placeholder="输入 ${esc(confirmation)}" autocomplete="off">
                 </div>`;
 
             const input = ui.body.querySelector('#aat-confirm');
-            footerButton(ui.footer, '返回', '', () => renderStep2(template, newName));
-            const go = footerButton(ui.footer, '解绑并重建', 'aat-btn-danger', () => execute(template, newName));
+            footerButton(ui.footer, '返回', '', () => renderStep2(template));
+            const go = footerButton(ui.footer, '解绑并重建', 'aat-btn-danger', () => execute(template));
             go.disabled = true;
-            input.addEventListener('input', () => { go.disabled = input.value.trim() !== lid; });
+            input.addEventListener('input', () => { go.disabled = input.value.trim() !== confirmation; });
             input.focus();
         }
 
-        async function execute(template, newName) {
+        async function execute(template) {
+            if (applying || !featureEnabled()) {
+                return;
+            }
+            applying = true;
+            preserveResult = true;
             ui.footer.innerHTML = '';
             const log = [];
+            let unbound = false;
+            let created = false;
             const say = (msg) => {
                 log.push(msg);
                 ui.body.innerHTML = `<div class="aat-tip">${log.map(esc).join('<br>')}</div>`;
@@ -807,20 +865,53 @@
 
             try {
                 let newModuleId;
+                if (destructive) {
+                    say('正在再次核对模组关联…');
+                    await attachedRow();
+                }
 
-                if (type === TYPE_H5_LINK) {
+                // 先确认旧值能完整暂存，再进行任何创建或解绑；空 moduleId 不会触发响应注入。
+                const pending = {
+                    moduleId: '',
+                    oldModuleId: String(oldModuleId),
+                    oldName: displayName,
+                    newName: displayName,
+                    templateName: template.name,
+                    oldFieldList: oldFieldList,
+                    ts: Date.now()
+                };
+                if (!writeSession(PENDING_KEY, pending)) {
+                    throw new Error('无法暂存旧配置，已停止执行，尚未创建或解绑模组。请检查浏览器存储空间后重试。');
+                }
+
+                if (destructive) {
                     say('正在解绑旧模组…');
-                    await api.h5ModuleDelete(linkId);
+                    if (isSdk) {
+                        await api.sdkModuleDelete(linkId);
+                    } else {
+                        await api.h5ModuleDelete(linkId);
+                    }
+                    unbound = true;
+                    say('旧模组已解绑。');
 
                     say('正在按模板绑定新模组…');
-                    await api.h5ModuleAdd({
+                    const data = {
                         id: linkId,
-                        name: newName,
+                        name: displayName,
                         module_config_template_id: template.id
-                    });
+                    };
+                    if (isSdk) {
+                        data.copy_id = '';
+                        await api.sdkModuleAdd(data);
+                    } else {
+                        await api.h5ModuleAdd(data);
+                    }
+                    created = true;
+                    say('新模组已绑定，配置值尚未保存。');
 
                     say('正在查询新模组 id…');
-                    const linkRow = listOf(await api.h5LinkAll()).find((r) => String(r.id) === String(linkId));
+                    const linkRow = isSdk ? await findSdkConfigRow(linkId)
+                        : listOf(await api.h5LinkAll()).find((r) => String(r.id) === String(linkId));
                     newModuleId = linkRow && linkRow.module_config_id;
                 } else {
                     say('正在读取旧模组的资源标识…');
@@ -830,47 +921,48 @@
                     // add 不回传 id，只能事后按名字捞。先记下同名的已有 id，
                     // 新建后取「多出来的那个」，避免重名时认错行。
                     const beforeIds = new Set(
-                        (await listModuleRows(newName))
-                            .filter((r) => String(r.name) === newName)
+                        (await listModuleRows(displayName))
+                            .filter((r) => String(r.name) === displayName)
                             .map((r) => String(r.id))
                     );
 
                     say('正在新建模组…');
                     await api.moduleAdd({
-                        name: newName,
+                        name: displayName,
                         module_config_template_id: template.id,
                         sys_key_entry_id: (oldRow && oldRow.sys_key_entry_id) || ''
                     });
+                    created = true;
+                    say('新模组已创建，配置值尚未保存。');
 
                     say('正在查询新模组 id…');
-                    const fresh = (await listModuleRows(newName))
-                        .filter((r) => String(r.name) === newName && !beforeIds.has(String(r.id)));
+                    const fresh = (await listModuleRows(displayName))
+                        .filter((r) => String(r.name) === displayName && !beforeIds.has(String(r.id)));
                     newModuleId = fresh.length === 1 ? fresh[0].id : null;
                     if (fresh.length > 1) {
-                        throw new Error(`按名称「${newName}」查到 ${fresh.length} 个同名新模组，无法确定是哪一个。请到模组配置列表手动打开正确的那个，并用下方按钮下载旧配置备份对照补值。`);
+                        throw new Error(`按名称「${displayName}」查到 ${fresh.length} 个同名新模组，无法确定是哪一个。请到模组配置列表手动打开正确的那个，并用下方按钮下载旧配置备份对照补值。`);
                     }
                 }
 
                 if (!newModuleId) {
                     throw new Error('新模组已创建，但没能查到它的 id。请手动打开它的配置页，并用下方按钮下载旧配置备份对照补值。');
                 }
+                if (String(newModuleId) === String(oldModuleId)) {
+                    throw new Error('查询到的关联仍是旧模组，无法确认新模组 id，已停止跳转。请刷新配置列表核对，并下载旧配置备份对照补值。');
+                }
 
-                writeSession(PENDING_KEY, {
-                    moduleId: String(newModuleId),
-                    oldModuleId: String(oldModuleId),
-                    oldName: displayName,
-                    newName: newName,
-                    templateName: template.name,
-                    oldFieldList: oldFieldList,
-                    ts: Date.now()
-                });
+                pending.moduleId = String(newModuleId);
+                pending.ts = Date.now();
+                if (!writeSession(PENDING_KEY, pending)) {
+                    throw new Error('新模组已创建，但迁移数据暂存失败，已停止跳转。请下载旧配置备份，手动打开新模组对照补值。');
+                }
 
                 say('新模组已就绪，正在跳转并注入旧配置的值…');
 
                 const params = new URLSearchParams();
                 params.set('id', String(newModuleId));
-                params.set('name', newName);
-                if (type === TYPE_H5_LINK) {
+                params.set('name', displayName);
+                if (destructive) {
                     params.set('delid', linkId);
                     params.set('type', type);
                 }
@@ -880,11 +972,14 @@
                 console.error('[套用模板]', e);
                 ui.body.innerHTML = `<div class="aat-tip">${log.map(esc).join('<br>')}</div>
                     <div class="aat-warn aat-err">${esc(e.message)}</div>
-                    ${type === TYPE_H5_LINK ? '<div class="aat-warn">如果解绑已经成功但绑定失败，该链接现在没有模组配置。请到 H5 链接管理页用「添加模组」手动按模板重建，再对照本地备份 JSON 补值。</div>' : ''}`;
+                    ${unbound && !created ? `<div class="aat-warn">旧模组已解绑，新模组绑定未确认成功。请到${isSdk ? ' SDK 配置总览' : ' H5 链接管理页'}核对关联；若尚无模组，请用「添加模组」按模板重建，再对照旧配置备份补值。</div>` : ''}
+                    ${created ? '<div class="aat-warn">新模组已创建，但自动迁移尚未完成。请下载旧配置备份，对照补值后手动保存。</div>' : ''}`;
                 footerButton(ui.footer, '重新下载备份', '', () => {
                     downloadJSON(`module-config-backup-${oldModuleId}.json`, detail);
                 });
                 footerButton(ui.footer, '关闭', '', closeModal);
+            } finally {
+                applying = false;
             }
         }
     }
@@ -913,7 +1008,7 @@
             </div>
             <div class="aat-p-bd">
                 <div class="aat-warn">
-                    结构切换<b>已落库</b>，但<b>值尚未保存</b>。<br>
+                    <b>结构已更新，迁移值尚未保存</b>。<br>
                     请核对后点击右上角「保存」。
                 </div>
                 <div class="aat-tip">
@@ -971,7 +1066,7 @@
     let button = null;
 
     function ensureButton() {
-        if (!isModuleEditPage()) {
+        if (!featureEnabled() || !isModuleEditPage()) {
             if (button && button.parentElement) {
                 button.remove();
             }
@@ -1004,19 +1099,29 @@
         if (button.parentElement !== toolbar) {
             toolbar.appendChild(button);
         }
+        button.disabled = applying;
     }
 
     // ===================== 启动 =====================
 
     function tick() {
         ensureButton();
-        if (isModuleEditPage()) {
+        if (!featureEnabled() && !applying && !preserveResult) {
+            closeModal();
+        }
+        if (isModuleEditPage() && (featureEnabled() || readSession(REPORT_KEY))) {
             renderPanel();
         }
     }
 
-    function init() {
+    function init(runtime) {
         if (location.hostname !== 'cms.apicmob.com') {
+            return;
+        }
+
+        if (runtime && runtime.watch) {
+            runtime.watch(tick);
+            tick();
             return;
         }
 
@@ -1035,9 +1140,15 @@
         tick();
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
+    function boot(runtime) {
+        featureEnabled = runtime && runtime.isEnabled ? runtime.isEnabled : () => true;
+        installXhrHooks();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => init(runtime), { once: true });
+        } else {
+            init(runtime);
+        }
     }
-})();
+
+    return { boot, migrateValues, diffSkeleton };
+});

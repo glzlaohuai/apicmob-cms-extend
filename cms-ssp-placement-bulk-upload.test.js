@@ -212,6 +212,25 @@ test('boots in a browser even when the page exposes CommonJS globals', () => {
     assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
 });
 
+test('runtime switch removes and restores the bulk entry without duplicate UI or polling', () => {
+    const harness = createInjectionHarness({ nativeActionLabel: '新增' });
+    let enabled = true;
+    const watchers = [];
+    let intervalCount = 0;
+    harness.win.setInterval = () => { intervalCount += 1; };
+    core.boot(harness.win, { isEnabled: () => enabled, watch: (callback) => watchers.push(callback) });
+    assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
+    enabled = false;
+    watchers.forEach((callback) => callback());
+    assert.equal(harness.document.getElementById('apicmob-placement-bulk-upload-btn'), null);
+    enabled = true;
+    watchers.forEach((callback) => callback());
+    watchers.forEach((callback) => callback());
+    assert.equal(harness.toolbar.children.filter((child) => child.id === 'apicmob-placement-bulk-upload-btn').length, 1);
+    assert.equal(intervalCount, 0);
+    assert.equal(watchers.length, 1);
+});
+
 test('normalizes all supported types and applies fixed sizes', () => {
     const rows = core.normalizeRows(validMatrix(), { prefix: 'Loklok', appName: 'Fallback' });
 

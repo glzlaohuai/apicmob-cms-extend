@@ -1,0 +1,10 @@
+{
+  "name": "apicmob-cms-extend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.js",
+    "check": "node scripts/build.js --check",
+    "test": "node --test *.test.js"
+  }
+}

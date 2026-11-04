@@ -2,11 +2,19 @@
 
 ## 安装
 
-1. 在 Tampermonkey 中安装仓库根目录的 `cms-extensions.user.js`。
+1. 安装 Tampermonkey 后，打开[整合脚本安装地址](https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js)，在 Tampermonkey 中确认安装。
 2. 停用原有的动态报表返回按钮、模组套用模板和 SDK 广告位批量上传三个独立脚本，避免重复运行。
 3. 刷新 CMS，点击右下角的设置图标，在独立标签页中配置功能开关。
 
 设置页地址：<https://cms.apicmob.com/?apicmob-cms-settings=1>。需要先安装整合脚本。
+
+## 更新
+
+脚本通过固定的 GitHub Raw 地址提供安装和更新，`@updateURL` 与 `@downloadURL` 已写入安装包。
+
+- 用户可以在 Tampermonkey 中手动检查更新，也可以在启用更新检查后按其设置定期检查；是否自动安装或需要确认由 Tampermonkey 设置决定。更新完成后刷新 CMS 页面。
+- 原来通过本地文件或复制代码安装的用户，需要先通过上面的安装地址覆盖安装一次，以配置托管更新地址。保持原有脚本名称和命名空间，避免重复安装。
+- 功能开关仍保存在当前浏览器的 CMS 站点存储中，更新脚本不会重置这些设置。
 
 ## 功能开关
 
@@ -15,8 +23,11 @@
 | 动态报表返回按钮 | 动态报表详情页 |
 | 模组配置套用模板 | 模组配置编辑页，支持独立模组、H5 链接和 SDK 配置 |
 | SDK 广告位批量上传 | SSP 媒体详情的 SDK 广告位列表，需要先选择应用 |
+| SDK 配置总览布局 | SDK 配置总览页，将“正式模式版本活跃度最小值”及修改、保存按钮移至应用信息下方、配置表上方的左侧 |
 
-三个功能默认开启。设置自动保存在当前浏览器的 CMS 站点存储中，并同步到同一浏览器配置下已打开的 CMS 标签页。不同浏览器或浏览器配置之间不共享设置。
+所有功能默认开启。设置自动保存在当前浏览器的 CMS 站点存储中，并同步到同一浏览器配置下已打开的 CMS 标签页。不同浏览器或浏览器配置之间不共享设置。
+
+SDK 配置总览布局仅在 `#/sdk/config/overview` 生效，保留原有输入、修改、取消及保存行为。关闭该开关会恢复原有布局。
 
 关闭开关会移除该功能的入口；已经开始的模组重建或广告位批量创建会继续完成，避免中断后留下不完整配置。已执行操作的结果和失败时的备份下载入口会保留到手动关闭。模组迁移的待处理数据和结果报告会保留，迁移完成后仍需核对并手动保存。
 
@@ -28,6 +39,8 @@ npm run check
 npm test
 ```
 
-根目录只保留一个可安装脚本 `cms-extensions.user.js`。三个功能的源码位于 `src/features/`，由整合版统一启动；`src/cms-extensions.js` 管理设置、入口和统一页面监听。修改源码后运行构建，生成无需外部依赖的单文件安装包。
+根目录只保留一个可安装脚本 `cms-extensions.user.js`。各功能的源码位于 `src/features/`，由整合版统一启动；`src/cms-extensions.js` 管理设置、入口和统一页面监听。修改源码后运行构建，生成无需外部依赖的单文件安装包。
+
+发布更新时，先提高 `scripts/build.js` 中的 `@version`，同步 `package.json` 和 `src/cms-extensions.js` 中的展示版本，再运行上述构建与检查。将源码和生成的 `cms-extensions.user.js` 一起提交并推送到 `origin/master`。Tampermonkey 通过版本号判断更新，仅推送代码而不提高版本号不会触发正常的版本更新。
 
 `cms-extensions-settings.html` 可以直接打开预览设置界面。本地文件预览的存储与实际 CMS 站点隔离，预览中的开关不会修改 CMS 的设置。

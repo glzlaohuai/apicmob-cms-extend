@@ -19,15 +19,18 @@ const factories = [
     factoryOf('src/cms-extensions.js', 'createCmsExtensions'),
     factoryOf('src/features/dynamic-report-back-button.js', 'createDynamicReportBackButton'),
     factoryOf('src/features/module-apply-template.js', 'createModuleApplyTemplate'),
-    factoryOf('src/features/ssp-placement-bulk-upload.js', 'createPlacementBulkUpload')
+    factoryOf('src/features/ssp-placement-bulk-upload.js', 'createPlacementBulkUpload'),
+    factoryOf('src/features/sdk-config-overview-layout.js', 'createSdkConfigOverviewLayout')
 ];
 
 const output = `// ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.0.0
-// @description  整合动态报表返回、模组套用模板和 SDK 广告位批量上传，提供独立功能开关设置页
+// @version      1.1.0
+// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传和 SDK 配置总览布局，提供独立功能开关设置页
 // @author       liulifeng
+// @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
+// @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @match        https://cms.apicmob.com/*
 // @grant        none
 // @run-at       document-start
@@ -43,7 +46,8 @@ ${factories.join('\n\n')}
     createCmsExtensions().boot(window, {
         reportBack: (runtime) => createDynamicReportBackButton().boot(window, runtime),
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
-        placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime)
+        placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),
+        sdkOverviewLayout: (runtime) => createSdkConfigOverviewLayout().boot(window, runtime)
     });
 })();
 `;

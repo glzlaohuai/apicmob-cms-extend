@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.0.0
-// @description  整合动态报表返回、模组套用模板和 SDK 广告位批量上传，提供独立功能开关设置页
+// @version      1.1.0
+// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传和 SDK 配置总览布局，提供独立功能开关设置页
 // @author       liulifeng
+// @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
+// @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @match        https://cms.apicmob.com/*
 // @grant        none
 // @run-at       document-start
@@ -23,7 +25,8 @@ function createCmsExtensions() {
     const FEATURES = Object.freeze([
         Object.freeze({ id: 'reportBack', name: '动态报表返回按钮', location: '数据统计 / 动态报表详情', icon: 'arrow-left' }),
         Object.freeze({ id: 'moduleTemplate', name: '模组配置套用模板', location: '系统管理 / 模组配置编辑', icon: 'layers' }),
-        Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' })
+        Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
+        Object.freeze({ id: 'sdkOverviewLayout', name: 'SDK 配置总览布局', location: 'SDK / 配置管理 / 配置总览', icon: 'layers' })
     ]);
 
     // Lucide icons (ISC license); kept inline so the userscript works without a CDN.
@@ -98,6 +101,7 @@ function createCmsExtensions() {
                 .feature:nth-of-type(1) .feature-icon { background: #e9f1fc; color: #3873b9; }
                 .feature:nth-of-type(2) .feature-icon { background: #e9f3ed; color: #39805b; }
                 .feature:nth-of-type(3) .feature-icon { background: #faedf0; color: #b65a71; }
+                .feature:nth-of-type(4) .feature-icon { background: #edf4f5; color: #397b83; }
                 .feature-name { display: block; margin-bottom: 6px; font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
                 .feature-location { display: block; color: #7c8590; font-size: 12px; overflow-wrap: anywhere; }
                 .switch-group { display: flex; align-items: center; gap: 12px; }
@@ -140,7 +144,7 @@ function createCmsExtensions() {
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.0.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.0</span></footer>
             </main>`;
 
         function render(next) {
@@ -2731,9 +2735,129 @@ function createPlacementBulkUpload() {
     };
 }
 
+function createSdkConfigOverviewLayout() {
+    'use strict';
+
+    const STYLE_ID = 'apicmob-sdk-config-overview-layout';
+    const ATTRIBUTE = 'data-apicmob-sdk-overview-layout';
+    const HEADER = `.app-info[${ATTRIBUTE}]`;
+    const CSS = `
+        ${HEADER} {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 385px));
+            gap: 20px 0;
+            padding-bottom: 20px !important;
+        }
+        ${HEADER} > .row {
+            display: contents !important;
+        }
+        ${HEADER} > .row > div {
+            min-width: 0 !important;
+            overflow-wrap: anywhere;
+        }
+        ${HEADER} > .row:first-child > div:not(.activity-min-item) {
+            grid-row: 1;
+        }
+        ${HEADER} > .row:nth-child(2) > div {
+            grid-row: 2;
+        }
+        ${HEADER} > .row > .activity-min-item {
+            grid-column: 1 / -1;
+            grid-row: 3;
+            display: flex !important;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        ${HEADER} .activity-min-input {
+            flex: 0 0 110px;
+        }
+        ${HEADER} .activity-min-item > .el-button + .el-button {
+            margin-left: 0;
+        }
+        @media (max-width: 700px) {
+            ${HEADER} {
+                grid-template-columns: minmax(0, 1fr);
+            }
+            ${HEADER} > .row:first-child > div:nth-child(2) {
+                grid-row: 2;
+            }
+            ${HEADER} > .row:nth-child(2) > div:first-child {
+                grid-row: 3;
+            }
+            ${HEADER} > .row:nth-child(2) > div:nth-child(2) {
+                grid-row: 4;
+            }
+            ${HEADER} > .row > .activity-min-item {
+                grid-row: 5;
+            }
+            ${HEADER} .activity-min-item > span:first-child {
+                flex-basis: 100%;
+            }
+        }
+    `;
+
+    function boot(win, runtime) {
+        const document = win.document;
+        const featureEnabled = runtime && runtime.isEnabled ? runtime.isEnabled : () => true;
+
+        function updateLayout() {
+            const active = featureEnabled()
+                && /^#\/sdk\/config\/overview\/?(?:\?|$)/.test(win.location.hash);
+            const headers = new Set(active
+                ? Array.from(document.querySelectorAll('.app-info')).filter((header) =>
+                    header.querySelector(':scope > .row > .activity-min-item'))
+                : []);
+
+            document.querySelectorAll(HEADER).forEach((header) => {
+                if (!headers.has(header)) {
+                    header.removeAttribute(ATTRIBUTE);
+                }
+            });
+
+            const style = document.getElementById(STYLE_ID);
+            if (!headers.size) {
+                if (style) style.remove();
+                return;
+            }
+
+            if (!style) {
+                const nextStyle = document.createElement('style');
+                nextStyle.id = STYLE_ID;
+                nextStyle.textContent = CSS;
+                document.head.appendChild(nextStyle);
+            }
+            headers.forEach((header) => {
+                if (!header.hasAttribute(ATTRIBUTE)) {
+                    header.setAttribute(ATTRIBUTE, '');
+                }
+            });
+        }
+
+        function init() {
+            if (runtime && runtime.watch) {
+                runtime.watch(updateLayout);
+            } else {
+                win.addEventListener('hashchange', updateLayout);
+                win.setInterval(updateLayout, 500);
+            }
+            updateLayout();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init, { once: true });
+        } else {
+            init();
+        }
+    }
+
+    return { boot };
+}
+
     createCmsExtensions().boot(window, {
         reportBack: (runtime) => createDynamicReportBackButton().boot(window, runtime),
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
-        placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime)
+        placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),
+        sdkOverviewLayout: (runtime) => createSdkConfigOverviewLayout().boot(window, runtime)
     });
 })();

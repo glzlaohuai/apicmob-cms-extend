@@ -42,11 +42,11 @@ function createHarness(initial) {
 test('settings default to enabled and accept only known boolean switches', () => {
     assert.deepEqual(extensions.normalizeSettings(null), {
         version: 1,
-        features: { reportBack: true, moduleTemplate: true, placementBulk: true }
+        features: { reportBack: true, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true }
     });
     assert.deepEqual(extensions.normalizeSettings({
         features: { reportBack: false, moduleTemplate: 'false', placementBulk: 0, unknown: true }
-    }).features, { reportBack: false, moduleTemplate: true, placementBulk: true });
+    }).features, { reportBack: false, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true });
 });
 
 test('malformed or unavailable storage does not prevent default startup', () => {
@@ -55,7 +55,7 @@ test('malformed or unavailable storage does not prevent default startup', () => 
     assert.equal(extensions.readSettings(harness.win).features.reportBack, true);
     Object.defineProperty(harness.win, 'localStorage', { get() { throw new Error('Access denied'); } });
     extensions.boot(harness.win, harness.factories);
-    assert.equal(harness.starts.length, 3);
+    assert.equal(harness.starts.length, extensions.FEATURES.length);
 });
 
 test('save failures are reported to the settings UI instead of silently succeeding', () => {
@@ -65,10 +65,10 @@ test('save failures are reported to the settings UI instead of silently succeedi
 });
 
 test('disabled features do not start until enabled by another tab', () => {
-    const harness = createHarness({ features: { moduleTemplate: false, placementBulk: false } });
+    const harness = createHarness({ features: { moduleTemplate: false, placementBulk: false, sdkOverviewLayout: false } });
     extensions.boot(harness.win, harness.factories);
     assert.deepEqual(harness.starts, ['reportBack']);
-    extensions.saveSettings(harness.win, { features: { reportBack: false, moduleTemplate: true, placementBulk: false } });
+    extensions.saveSettings(harness.win, { features: { reportBack: false, moduleTemplate: true, placementBulk: false, sdkOverviewLayout: false } });
     harness.dispatch();
     assert.deepEqual(harness.starts, ['reportBack', 'moduleTemplate']);
     assert.equal(harness.runtimes.reportBack.isEnabled(), false);
@@ -78,20 +78,20 @@ test('disabled features do not start until enabled by another tab', () => {
 });
 
 test('storage clearing restores defaults while unrelated changes are ignored', () => {
-    const harness = createHarness({ features: { reportBack: false, moduleTemplate: false, placementBulk: false } });
+    const harness = createHarness({ features: { reportBack: false, moduleTemplate: false, placementBulk: false, sdkOverviewLayout: false } });
     extensions.boot(harness.win, harness.factories);
     harness.stored.clear();
     harness.dispatch('some-other-setting');
     assert.equal(harness.starts.length, 0);
     harness.dispatch(null);
-    assert.equal(harness.starts.length, 3);
+    assert.equal(harness.starts.length, extensions.FEATURES.length);
 });
 
 test('duplicate script injection and non-CMS pages cannot start additional features', () => {
     const harness = createHarness();
     extensions.boot(harness.win, harness.factories);
     extensions.boot(harness.win, harness.factories);
-    assert.equal(harness.starts.length, 3);
+    assert.equal(harness.starts.length, extensions.FEATURES.length);
     const other = createHarness();
     other.win.location.hostname = 'other.example';
     extensions.boot(other.win, other.factories);
@@ -102,13 +102,13 @@ test('one failed feature does not prevent other features from starting or updati
     const harness = createHarness();
     harness.factories.reportBack = () => { throw new Error('Failed to boot'); };
     extensions.boot(harness.win, harness.factories);
-    assert.deepEqual(harness.starts, ['moduleTemplate', 'placementBulk']);
+    assert.deepEqual(harness.starts, ['moduleTemplate', 'placementBulk', 'sdkOverviewLayout']);
     assert.equal(harness.errors.length, 1);
-    assert.deepEqual(harness.ticks.map(({ id }) => id), ['moduleTemplate', 'placementBulk']);
+    assert.deepEqual(harness.ticks.map(({ id }) => id), ['moduleTemplate', 'placementBulk', 'sdkOverviewLayout']);
 });
 
 test('disabled template feature still resumes an unexpired migration for the current module', () => {
-    const harness = createHarness({ features: { reportBack: false, moduleTemplate: false, placementBulk: false } });
+    const harness = createHarness({ features: { reportBack: false, moduleTemplate: false, placementBulk: false, sdkOverviewLayout: false } });
     harness.win.location.hash = '#/system/custom-configuration/module-edit?id=new-module';
     harness.sessions.set('apicmob-apply-template::pending', JSON.stringify({ moduleId: 'new-module', ts: Date.now() }));
     extensions.boot(harness.win, harness.factories);

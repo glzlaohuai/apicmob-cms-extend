@@ -16,7 +16,8 @@
     const FEATURES = Object.freeze([
         Object.freeze({ id: 'reportBack', name: '动态报表返回按钮', location: '数据统计 / 动态报表详情', icon: 'arrow-left' }),
         Object.freeze({ id: 'moduleTemplate', name: '模组配置套用模板', location: '系统管理 / 模组配置编辑', icon: 'layers' }),
-        Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' })
+        Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
+        Object.freeze({ id: 'sdkOverviewLayout', name: 'SDK 配置总览布局', location: 'SDK / 配置管理 / 配置总览', icon: 'layers' })
     ]);
 
     // Lucide icons (ISC license); kept inline so the userscript works without a CDN.
@@ -91,6 +92,7 @@
                 .feature:nth-of-type(1) .feature-icon { background: #e9f1fc; color: #3873b9; }
                 .feature:nth-of-type(2) .feature-icon { background: #e9f3ed; color: #39805b; }
                 .feature:nth-of-type(3) .feature-icon { background: #faedf0; color: #b65a71; }
+                .feature:nth-of-type(4) .feature-icon { background: #edf4f5; color: #397b83; }
                 .feature-name { display: block; margin-bottom: 6px; font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
                 .feature-location { display: block; color: #7c8590; font-size: 12px; overflow-wrap: anywhere; }
                 .switch-group { display: flex; align-items: center; gap: 12px; }
@@ -133,7 +135,7 @@
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.0.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.1.0</span></footer>
             </main>`;
 
         function render(next) {

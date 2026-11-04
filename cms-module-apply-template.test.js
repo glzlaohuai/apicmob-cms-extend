@@ -4,9 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const core = require('./cms-module-apply-template.user.js');
+const core = require('./src/features/module-apply-template.js');
 
-const SOURCE = fs.readFileSync(require.resolve('./cms-module-apply-template.user.js'), 'utf8');
+const SOURCE = fs.readFileSync(require.resolve('./src/features/module-apply-template.js'), 'utf8');
 const ROUTE = '#/system/custom-configuration/module-edit';
 const PENDING_KEY = 'apicmob-apply-template::pending';
 const REPORT_KEY = 'apicmob-apply-template::report';
@@ -233,16 +233,9 @@ function createHarness(options = {}) {
             return { status: 200, ok: true, json: async () => body };
         }
     };
-    if (options.commonjs) context.module = { exports: {} };
-    if (options.runtime) {
-        context.module = { exports: {} };
-        context.window = undefined;
-        vm.runInNewContext(SOURCE, context);
-        context.window = window;
-        context.module.exports.boot(options.runtime);
-    } else {
-        vm.runInNewContext(SOURCE, context);
-    }
+    context.module = { exports: {} };
+    vm.runInNewContext(SOURCE, context);
+    context.module.exports.boot(options.runtime);
     const modal = () => document.getElementById('apicmob-apply-template-modal');
     const button = (label) => {
         const found = modal().querySelector('.aat-ft').children.find((child) => child.textContent === label);
@@ -293,7 +286,7 @@ function assertNoNavigation(harness) {
 }
 
 test('SDK workflow keeps the name and separates parent and module IDs', async () => {
-    const harness = createHarness({ commonjs: true });
+    const harness = createHarness();
     await harness.execute();
     assert.deepEqual(writes(harness).map(({ path, data }) => ({ path, data })), [
         { path: '/cms2/sdk/config/module_config/delete', data: { id: PARENT_ID } },

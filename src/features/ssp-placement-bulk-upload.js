@@ -1,21 +1,8 @@
-// ==UserScript==
-// @name         CMS SDK 广告位批量上传
-// @namespace    https://cms.apicmob.com/
-// @version      1.0.1
-// @description  在 SSP 媒体详情的 SDK 广告位页按 Excel 批量创建、配置结算规则并启用广告位
-// @author       liulifeng
-// @match        https://cms.apicmob.com/*
-// @grant        none
-// @run-at       document-start
-// ==/UserScript==
-
 (function (factory) {
     'use strict';
 
     const core = factory();
-    if (typeof window !== 'undefined' && window.document) {
-        core.boot(window);
-    } else if (typeof module === 'object' && module.exports) {
+    if (typeof module === 'object' && module.exports) {
         module.exports = core;
     }
 })(function createPlacementBulkUpload() {

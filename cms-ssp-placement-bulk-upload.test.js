@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const core = require('./cms-ssp-placement-bulk-upload.user.js');
+const core = require('./src/features/ssp-placement-bulk-upload.js');
 
 const TYPE_LIST = [
     { id: 'type-banner', name: 'Banner' },
@@ -196,9 +196,9 @@ test('injects the bulk upload button when the native add button is unavailable',
     assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
 });
 
-test('boots in a browser even when the page exposes CommonJS globals', () => {
+test('exports the feature without injecting UI until explicitly started', () => {
     const harness = createInjectionHarness({ nativeActionLabel: '新增' });
-    const source = fs.readFileSync(require.resolve('./cms-ssp-placement-bulk-upload.user.js'), 'utf8');
+    const source = fs.readFileSync(require.resolve('./src/features/ssp-placement-bulk-upload.js'), 'utf8');
     const context = {
         module: { exports: {} },
         window: harness.win,
@@ -209,6 +209,8 @@ test('boots in a browser even when the page exposes CommonJS globals', () => {
 
     vm.runInNewContext(source, context);
 
+    assert.equal(harness.document.getElementById('apicmob-placement-bulk-upload-btn'), null);
+    context.module.exports.boot(harness.win);
     assert.ok(harness.document.getElementById('apicmob-placement-bulk-upload-btn'));
 });
 

@@ -1,21 +1,8 @@
-// ==UserScript==
-// @name         CMS Dynamic Report Back Button
-// @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  在 dynamic-report 详情页添加返回按钮（支持单页应用）
-// @author       You
-// @match        https://cms.apicmob.com/*
-// @grant        none
-// @run-at       document-idle
-// ==/UserScript==
-
 (function (factory) {
     'use strict';
 
     const core = factory();
-    if (typeof window !== 'undefined' && window.document) {
-        core.boot(window);
-    } else if (typeof module === 'object' && module.exports) {
+    if (typeof module === 'object' && module.exports) {
         module.exports = core;
     }
 })(function createDynamicReportBackButton() {

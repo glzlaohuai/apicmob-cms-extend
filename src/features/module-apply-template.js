@@ -1,21 +1,8 @@
-// ==UserScript==
-// @name         CMS 模组配置「套用模板」
-// @namespace    https://cms.apicmob.com/
-// @version      1.1.1
-// @description  在模组配置编辑页右上角新增「套用模板」：按新模组模版重建模组，把旧配置的值平移过去，并列出被删除 / 需额外配置的项
-// @author       liulifeng
-// @match        https://cms.apicmob.com/*
-// @grant        none
-// @run-at       document-start
-// ==/UserScript==
-
 (function (factory) {
     'use strict';
 
     const core = factory();
-    if (typeof window !== 'undefined' && window.document) {
-        core.boot();
-    } else if (typeof module === 'object' && module.exports) {
+    if (typeof module === 'object' && module.exports) {
         module.exports = core;
     }
 })(function createModuleApplyTemplate() {

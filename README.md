@@ -28,6 +28,6 @@ npm run check
 npm test
 ```
 
-三个原有 `.user.js` 文件仍可独立运行，也是整合版的功能源码。`src/cms-extensions.js` 管理设置、入口和统一页面监听。修改源码后运行构建，生成无需外部依赖的单文件安装包 `cms-extensions.user.js`。
+根目录只保留一个可安装脚本 `cms-extensions.user.js`。三个功能的源码位于 `src/features/`，由整合版统一启动；`src/cms-extensions.js` 管理设置、入口和统一页面监听。修改源码后运行构建，生成无需外部依赖的单文件安装包。
 
 `cms-extensions-settings.html` 可以直接打开预览设置界面。本地文件预览的存储与实际 CMS 站点隔离，预览中的开关不会修改 CMS 的设置。

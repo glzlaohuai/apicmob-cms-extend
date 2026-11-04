@@ -17,9 +17,9 @@ function factoryOf(filename, name) {
 
 const factories = [
     factoryOf('src/cms-extensions.js', 'createCmsExtensions'),
-    factoryOf('cms-dynamic-report-back-button.user.js', 'createDynamicReportBackButton'),
-    factoryOf('cms-module-apply-template.user.js', 'createModuleApplyTemplate'),
-    factoryOf('cms-ssp-placement-bulk-upload.user.js', 'createPlacementBulkUpload')
+    factoryOf('src/features/dynamic-report-back-button.js', 'createDynamicReportBackButton'),
+    factoryOf('src/features/module-apply-template.js', 'createModuleApplyTemplate'),
+    factoryOf('src/features/ssp-placement-bulk-upload.js', 'createPlacementBulkUpload')
 ];
 
 const output = `// ==UserScript==

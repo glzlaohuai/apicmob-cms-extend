@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.1
+// @version      1.2.2
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.1';
+    const VERSION = '1.2.2';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -2933,12 +2933,7 @@ function createSdkIntegration() {
             status = !own(config, 'request_limit_switch') ? '未配置开关'
                 : value === 0 ? '关闭' : value === 1 ? '开启' : `未知值：${JSON.stringify(value)}`;
         }
-        return {
-            name: channelName(channel), status,
-            values: channel.module_config_id ? ['request_period', 'request_limit']
-                .filter((key) => own(config, key))
-                .map((key) => `${key}=${JSON.stringify(config[key])}`).join('，') : ''
-        };
+        return { name: channelName(channel), status };
     }
 
     function defaultModuleName(vm) {
@@ -3097,8 +3092,7 @@ function createSdkIntegration() {
         return [h('div', { class: 'apicmob-channel-controls' }, entry.channels.map((channel) => {
             const control = channelControl(channel);
             return h('div', { key: channel.id, class: 'apicmob-channel-control' }, [
-                h('div', [h('strong', [control.name]), h('span', { class: control.status === '开启' ? 'apicmob-control-on' : '' }, [`：${control.status}`])]),
-                control.values ? h('div', { class: 'apicmob-control-values' }, [control.values]) : null
+                h('div', [h('strong', [control.name]), h('span', { class: control.status === '开启' ? 'apicmob-control-on' : '' }, [`：${control.status}`])])
             ]);
         }))];
     }
@@ -3185,7 +3179,6 @@ function createSdkIntegration() {
                     .apicmob-channel-control + .apicmob-channel-control { margin-top: 6px; border-top: 1px solid #ebeef5; padding-top: 6px; }
                     .apicmob-channel-control strong { font-weight: 500; }
                     .apicmob-control-on { color: #21845b; }
-                    .apicmob-control-values { color: #7c8590; font-size: 12px; }
                     .apicmob-control-retry { border: 0; background: none; color: #2563b8; cursor: pointer; padding: 2px 4px; font: inherit; }
                 `;
                 win.document.head.appendChild(style);

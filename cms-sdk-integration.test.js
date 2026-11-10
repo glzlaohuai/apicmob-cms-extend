@@ -12,18 +12,17 @@ const channels = [
 
 test('channel controls match the supplied default and directed channel response', () => {
     assert.deepEqual(channels.map(integration.channelControl), [
-        { name: '默认渠道', status: '关闭', values: 'request_period=30，request_limit=1' },
-        { name: '瑞安-定向us(麦芽）', status: '未配置模组', values: '' }
+        { name: '默认渠道', status: '关闭' },
+        { name: '瑞安-定向us(麦芽）', status: '未配置模组' }
     ]);
 });
 
-test('enabled, missing and unknown switches remain distinct and preserve zero limits', () => {
+test('enabled, missing and unknown switches remain distinct and omit request limits', () => {
     const channel = { id: 'unnamed', cohort_id: 'cohort', module_config_id: 'module' };
     assert.equal(integration.channelControl(channel).status, '未配置开关');
     assert.equal(integration.channelControl(channel).name, 'unnamed');
     channel.module_config_json = { request_limit_switch: 1, request_period: 0, request_limit: 0 };
-    assert.equal(integration.channelControl(channel).status, '开启');
-    assert.equal(integration.channelControl(channel).values, 'request_period=0，request_limit=0');
+    assert.deepEqual(integration.channelControl(channel), { name: 'unnamed', status: '开启' });
     for (const value of [null, false, '0', 2]) {
         channel.module_config_json.request_limit_switch = value;
         assert.equal(integration.channelControl(channel).status, `未知值：${JSON.stringify(value)}`);

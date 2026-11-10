@@ -26,12 +26,7 @@
             status = !own(config, 'request_limit_switch') ? '未配置开关'
                 : value === 0 ? '关闭' : value === 1 ? '开启' : `未知值：${JSON.stringify(value)}`;
         }
-        return {
-            name: channelName(channel), status,
-            values: channel.module_config_id ? ['request_period', 'request_limit']
-                .filter((key) => own(config, key))
-                .map((key) => `${key}=${JSON.stringify(config[key])}`).join('，') : ''
-        };
+        return { name: channelName(channel), status };
     }
 
     function defaultModuleName(vm) {
@@ -190,8 +185,7 @@
         return [h('div', { class: 'apicmob-channel-controls' }, entry.channels.map((channel) => {
             const control = channelControl(channel);
             return h('div', { key: channel.id, class: 'apicmob-channel-control' }, [
-                h('div', [h('strong', [control.name]), h('span', { class: control.status === '开启' ? 'apicmob-control-on' : '' }, [`：${control.status}`])]),
-                control.values ? h('div', { class: 'apicmob-control-values' }, [control.values]) : null
+                h('div', [h('strong', [control.name]), h('span', { class: control.status === '开启' ? 'apicmob-control-on' : '' }, [`：${control.status}`])])
             ]);
         }))];
     }
@@ -278,7 +272,6 @@
                     .apicmob-channel-control + .apicmob-channel-control { margin-top: 6px; border-top: 1px solid #ebeef5; padding-top: 6px; }
                     .apicmob-channel-control strong { font-weight: 500; }
                     .apicmob-control-on { color: #21845b; }
-                    .apicmob-control-values { color: #7c8590; font-size: 12px; }
                     .apicmob-control-retry { border: 0; background: none; color: #2563b8; cursor: pointer; padding: 2px 4px; font: inherit; }
                 `;
                 win.document.head.appendChild(style);

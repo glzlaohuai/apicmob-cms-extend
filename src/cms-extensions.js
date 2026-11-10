@@ -11,6 +11,7 @@
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
+    const VERSION = '1.2.1';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -139,7 +140,7 @@
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.2.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v${VERSION}</span></footer>
             </main>`;
 
         function render(next) {
@@ -195,6 +196,7 @@
             return;
         }
         win.__apicmobCmsExtensions = true;
+        win.__apicmobCmsExtensionsVersion = VERSION;
 
         const document = win.document;
         const ready = (callback) => {
@@ -281,5 +283,5 @@
         });
     }
 
-    return { STORAGE_KEY, SETTINGS_PARAM, FEATURES, normalizeSettings, readSettings, saveSettings, settingsUrl, isSettingsPage, mountSettings, hasPendingMigration, boot };
+    return { STORAGE_KEY, VERSION, SETTINGS_PARAM, FEATURES, normalizeSettings, readSettings, saveSettings, settingsUrl, isSettingsPage, mountSettings, hasPendingMigration, boot };
 });

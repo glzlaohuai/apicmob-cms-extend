@@ -91,6 +91,7 @@ test('storage clearing restores defaults while unrelated changes are ignored', (
 test('duplicate script injection and non-CMS pages cannot start additional features', () => {
     const harness = createHarness();
     extensions.boot(harness.win, harness.factories);
+    assert.equal(harness.win.__apicmobCmsExtensionsVersion, extensions.VERSION);
     extensions.boot(harness.win, harness.factories);
     assert.equal(harness.starts.length, extensions.FEATURES.length);
     const other = createHarness();

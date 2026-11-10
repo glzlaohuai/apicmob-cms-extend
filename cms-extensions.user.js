@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.0
+// @version      1.2.1
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,6 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
+    const VERSION = '1.2.1';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -148,7 +149,7 @@ function createCmsExtensions() {
                             <span class="switch-group"><span class="switch-state" data-state="${feature.id}"></span><span class="switch-control"><input id="${feature.id}" type="checkbox" role="switch" aria-label="${feature.name}"><span class="switch-track"></span></span></span>
                         </label>`).join('')}
                 </div>
-                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v1.2.0</span></footer>
+                <footer class="footer"><span class="save-status" role="status" aria-live="polite">${icon('check')}<span data-message>设置已加载</span></span><span>v${VERSION}</span></footer>
             </main>`;
 
         function render(next) {
@@ -204,6 +205,7 @@ function createCmsExtensions() {
             return;
         }
         win.__apicmobCmsExtensions = true;
+        win.__apicmobCmsExtensionsVersion = VERSION;
 
         const document = win.document;
         const ready = (callback) => {
@@ -290,7 +292,7 @@ function createCmsExtensions() {
         });
     }
 
-    return { STORAGE_KEY, SETTINGS_PARAM, FEATURES, normalizeSettings, readSettings, saveSettings, settingsUrl, isSettingsPage, mountSettings, hasPendingMigration, boot };
+    return { STORAGE_KEY, VERSION, SETTINGS_PARAM, FEATURES, normalizeSettings, readSettings, saveSettings, settingsUrl, isSettingsPage, mountSettings, hasPendingMigration, boot };
 }
 
 function createDynamicReportBackButton() {
@@ -3004,21 +3006,33 @@ function createSdkIntegration() {
         };
     }
 
-    function findComponents(win, name) {
+    function findComponents(win, match) {
         const root = win.document.getElementById('app');
         if (!root) return [];
         const found = [];
         const seen = new Set();
+        const accepts = typeof match === 'function' ? match : (vm) => vm.$options && vm.$options.name === match;
         function visit(vm) {
             if (!vm || seen.has(vm) || vm._isDestroyed || vm._inactive) return;
             seen.add(vm);
-            if (vm.$options && vm.$options.name === name) found.push(vm);
+            if (accepts(vm)) found.push(vm);
             (vm.$children || []).forEach(visit);
         }
         visit(root.__vue__);
-        // Some deployments attach the root Vue instance below #app.
-        if (!seen.size) root.querySelectorAll('*').forEach((element) => visit(element.__vue__));
+        // A populated root tree can still omit Vue instances mounted separately below it.
+        if (!found.length) root.querySelectorAll('*').forEach((element) => visit(element.__vue__));
         return found;
+    }
+
+    function findIntegrationTable(win) {
+        return findComponents(win, (vm) => {
+            if (typeof vm.getTableColumn !== 'function' || typeof vm.loadColumn !== 'function'
+                || typeof vm.$watch !== 'function' || !Array.isArray(vm.data)) return false;
+            if (vm.$el && (vm.$el.isConnected === false
+                || (vm.$el.getClientRects && !vm.$el.getClientRects().length))) return false;
+            const fields = new Set(vm.getTableColumn().fullColumn.map((column) => column.property));
+            return ['supply_placement_name', 'supply_placement_placement_id', 'timeout'].every((field) => fields.has(field));
+        })[0];
     }
 
     function observe(win, runtime, update, active) {
@@ -3118,15 +3132,15 @@ function createSdkIntegration() {
 
         function readRows() {
             if (!binding) return;
-            const { page } = binding;
-            const loading = Boolean(page.loadings && page.loadings.isTableLoading);
+            const { table } = binding;
+            const loading = Boolean(table.loading);
             if (loading) {
                 if (!wasLoading) { queue.cancel(); store.entries = {}; }
                 wasLoading = true;
                 return;
             }
-            if (lastRows !== page.tabledata || wasLoading) {
-                lastRows = page.tabledata;
+            if (lastRows !== table.data || wasLoading) {
+                lastRows = table.data;
                 wasLoading = false;
                 queue.begin((lastRows || []).filter((row) => row.id).map((row) => row.id));
             }
@@ -3137,9 +3151,8 @@ function createSdkIntegration() {
                 if (binding) release();
                 return;
             }
-            const page = findComponents(win, 'sdk-integration-overview')[0];
-            const table = page && page.refWrapper && page.refWrapper.$refs.refTable;
-            if (!table || !table.getTableColumn || !table.loadColumn) {
+            const table = findIntegrationTable(win);
+            if (!table) {
                 if (binding) release();
                 return;
             }
@@ -3148,9 +3161,9 @@ function createSdkIntegration() {
                 // Vue is a CDN global and may load after this document-start userscript.
                 if (!win.Vue) return;
                 win.Vue.observable(store);
-                binding = { page, table, unwatch: [] };
-                binding.unwatch.push(page.$watch(() => page.tabledata, readRows));
-                binding.unwatch.push(page.$watch(() => page.loadings.isTableLoading, readRows, { sync: true }));
+                binding = { table, unwatch: [] };
+                binding.unwatch.push(table.$watch(() => table.data, readRows));
+                binding.unwatch.push(table.$watch(() => table.loading, readRows, { sync: true }));
             }
             const columns = table.getTableColumn().collectColumn;
             if (!columns.some((column) => column.property === COLUMN)) {

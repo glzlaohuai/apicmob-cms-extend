@@ -99,21 +99,33 @@
         };
     }
 
-    function findComponents(win, name) {
+    function findComponents(win, match) {
         const root = win.document.getElementById('app');
         if (!root) return [];
         const found = [];
         const seen = new Set();
+        const accepts = typeof match === 'function' ? match : (vm) => vm.$options && vm.$options.name === match;
         function visit(vm) {
             if (!vm || seen.has(vm) || vm._isDestroyed || vm._inactive) return;
             seen.add(vm);
-            if (vm.$options && vm.$options.name === name) found.push(vm);
+            if (accepts(vm)) found.push(vm);
             (vm.$children || []).forEach(visit);
         }
         visit(root.__vue__);
-        // Some deployments attach the root Vue instance below #app.
-        if (!seen.size) root.querySelectorAll('*').forEach((element) => visit(element.__vue__));
+        // A populated root tree can still omit Vue instances mounted separately below it.
+        if (!found.length) root.querySelectorAll('*').forEach((element) => visit(element.__vue__));
         return found;
+    }
+
+    function findIntegrationTable(win) {
+        return findComponents(win, (vm) => {
+            if (typeof vm.getTableColumn !== 'function' || typeof vm.loadColumn !== 'function'
+                || typeof vm.$watch !== 'function' || !Array.isArray(vm.data)) return false;
+            if (vm.$el && (vm.$el.isConnected === false
+                || (vm.$el.getClientRects && !vm.$el.getClientRects().length))) return false;
+            const fields = new Set(vm.getTableColumn().fullColumn.map((column) => column.property));
+            return ['supply_placement_name', 'supply_placement_placement_id', 'timeout'].every((field) => fields.has(field));
+        })[0];
     }
 
     function observe(win, runtime, update, active) {
@@ -213,15 +225,15 @@
 
         function readRows() {
             if (!binding) return;
-            const { page } = binding;
-            const loading = Boolean(page.loadings && page.loadings.isTableLoading);
+            const { table } = binding;
+            const loading = Boolean(table.loading);
             if (loading) {
                 if (!wasLoading) { queue.cancel(); store.entries = {}; }
                 wasLoading = true;
                 return;
             }
-            if (lastRows !== page.tabledata || wasLoading) {
-                lastRows = page.tabledata;
+            if (lastRows !== table.data || wasLoading) {
+                lastRows = table.data;
                 wasLoading = false;
                 queue.begin((lastRows || []).filter((row) => row.id).map((row) => row.id));
             }
@@ -232,9 +244,8 @@
                 if (binding) release();
                 return;
             }
-            const page = findComponents(win, 'sdk-integration-overview')[0];
-            const table = page && page.refWrapper && page.refWrapper.$refs.refTable;
-            if (!table || !table.getTableColumn || !table.loadColumn) {
+            const table = findIntegrationTable(win);
+            if (!table) {
                 if (binding) release();
                 return;
             }
@@ -243,9 +254,9 @@
                 // Vue is a CDN global and may load after this document-start userscript.
                 if (!win.Vue) return;
                 win.Vue.observable(store);
-                binding = { page, table, unwatch: [] };
-                binding.unwatch.push(page.$watch(() => page.tabledata, readRows));
-                binding.unwatch.push(page.$watch(() => page.loadings.isTableLoading, readRows, { sync: true }));
+                binding = { table, unwatch: [] };
+                binding.unwatch.push(table.$watch(() => table.data, readRows));
+                binding.unwatch.push(table.$watch(() => table.loading, readRows, { sync: true }));
             }
             const columns = table.getTableColumn().collectColumn;
             if (!columns.some((column) => column.property === COLUMN)) {

@@ -185,7 +185,7 @@ function bootHarness(vm) {
     const ticks = [];
     const observers = [];
     let enabled = true;
-    elements.set('app', { __vue__: { $children: [vm] } });
+    elements.set('app', { __vue__: { $children: [vm] }, querySelectorAll: () => [] });
     Object.assign(win.document, {
         readyState: 'complete', body: {},
         getElementById: (id) => elements.get(id),
@@ -211,38 +211,42 @@ function bootHarness(vm) {
 
 test('overview lifecycle preserves native columns, rereads queries and removes disabled UI', async () => {
     const native = { property: 'supply_placement_name', slots: { default() {} }, editRender: {} };
-    let columns = [native];
-    const table = {
-        getTableColumn: () => ({ collectColumn: columns.slice() }),
-        loadColumn: (next) => { columns = next.map((column) => column.property ? column : { ...column, property: column.field }); return Promise.resolve(); }
-    };
-    const page = makeWatched({
+    const nativeColumns = [native, { property: 'supply_placement_placement_id' }, { property: 'timeout' }];
+    let columns = nativeColumns.slice();
+    const page = {
         $options: { name: 'sdk-integration-overview' },
-        refWrapper: { $refs: { refTable: table } },
         tabledata: [{ id: 'one' }, { id: 'one' }, { id: 'two' }],
         loadings: { isTableLoading: false }
+    };
+    const table = makeWatched({
+        get data() { return page.tabledata; },
+        get loading() { return page.loadings.isTableLoading; },
+        getTableColumn: () => ({ collectColumn: columns.slice(), fullColumn: columns.slice() }),
+        loadColumn: (next) => { columns = next.map((column) => column.property ? column : { ...column, property: column.field }); return Promise.resolve(); }
     });
+    page.$children = [table];
+    page.refWrapper = { $refs: { refTable: table } };
     const h = bootHarness(page);
     integration.bootOverview(h.win, h.runtime);
     await flush();
     h.tick();
     assert.equal(h.calls.length, 2);
-    assert.equal(columns.length, 2);
+    assert.equal(columns.length, 4);
     assert.equal(columns[0], native, 'native slots and edit state retain their original column');
     page.loadings.isTableLoading = true;
-    page.notify();
+    table.notify();
     h.tick();
     assert.equal(h.calls.length, 2);
     page.tabledata = [{ id: 'three' }];
     page.loadings.isTableLoading = false;
-    page.notify();
+    table.notify();
     await flush();
     assert.equal(h.calls.length, 3);
     assert.equal(new URL(h.calls[2].url).searchParams.get('id'), 'three');
     h.win.location.hash = '#/sdk/integration/overview/details?id=three';
     h.tick();
-    assert.deepEqual(columns, [native]);
-    assert.equal(page.watchers.size, 0);
+    assert.deepEqual(columns, nativeColumns);
+    assert.equal(table.watchers.size, 0);
     assert.equal(h.observers[0].connected, false);
     h.win.location.hash = '#/sdk/integration/overview';
     h.tick();
@@ -250,13 +254,13 @@ test('overview lifecycle preserves native columns, rereads queries and removes d
     assert.equal(h.calls.length, 4);
     h.setEnabled(false);
     h.tick();
-    assert.deepEqual(columns, [native]);
+    assert.deepEqual(columns, nativeColumns);
     assert.equal(h.observers[0].connected, false);
     h.setEnabled(true);
     h.tick();
     await flush();
     assert.equal(h.calls.length, 5);
-    assert.equal(columns.length, 2);
+    assert.equal(columns.length, 4);
 });
 
 test('naming watches dialog openings, handles reused channels and detaches when disabled', () => {
@@ -292,4 +296,50 @@ test('naming watches dialog openings, handles reused channels and detaches when 
     h.tick();
     assert.equal(vm.watchers.size, 0);
     assert.equal(h.observers[0].connected, false);
+});
+
+test('overview locates the rendered table without depending on the page component name or refs', async () => {
+    let columns = ['supply_placement_name', 'supply_placement_placement_id', 'timeout'].map((property) => ({ property }));
+    const table = makeWatched({
+        $options: { name: 'VxeTable' },
+        data: [{ id: 'one' }], loading: false,
+        getTableColumn: () => ({ collectColumn: columns.slice(), fullColumn: columns.slice() }),
+        loadColumn: (next) => { columns = next.map((column) => column.property ? column : { ...column, property: column.field }); return Promise.resolve(); }
+    });
+    const page = { $options: { name: 'integration-overview-wrapper' }, $children: [table], $refs: {} };
+    const h = bootHarness(page);
+    integration.bootOverview(h.win, h.runtime);
+    await flush();
+    assert.equal(columns.some((column) => column.property === 'apicmobChannelControl'), true,
+        'the channel-control column must appear on the actual integration table');
+    assert.equal(h.calls.length, 1);
+    table.loading = true;
+    table.notify();
+    table.data = [{ id: 'two' }];
+    table.loading = false;
+    table.notify();
+    await flush();
+    assert.equal(h.calls.length, 2);
+    assert.equal(new URL(h.calls[1].url).searchParams.get('id'), 'two');
+});
+
+test('a populated root Vue tree does not prevent finding a separate rendered table instance', async () => {
+    let columns = ['supply_placement_name', 'supply_placement_placement_id', 'timeout'].map((property) => ({ property }));
+    const table = makeWatched({
+        $options: { name: 'VxeTable' }, data: [{ id: 'one' }], loading: false,
+        getTableColumn: () => ({ collectColumn: columns.slice(), fullColumn: columns.slice() }),
+        loadColumn: (next) => { columns = next.map((column) => column.property ? column : { ...column, property: column.field }); return Promise.resolve(); }
+    });
+    const h = bootHarness({ $options: { name: 'App' } });
+    const root = h.win.document.getElementById('app');
+    root.querySelectorAll = () => [{ __vue__: table }];
+    integration.bootOverview(h.win, h.runtime);
+    await flush();
+    assert.equal(columns.some((column) => column.property === 'apicmobChannelControl'), true);
+    assert.equal(h.calls.length, 1);
+    h.tick();
+    assert.equal(columns.filter((column) => column.property === 'apicmobChannelControl').length, 1);
+    h.setEnabled(false);
+    h.tick();
+    assert.equal(columns.some((column) => column.property === 'apicmobChannelControl'), false);
 });

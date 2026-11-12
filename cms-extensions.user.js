@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.2
+// @version      1.2.3
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.2';
+    const VERSION = '1.2.3';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -1532,7 +1532,7 @@ function createPlacementBulkUpload() {
         skipped: '已存在，跳过',
         conflict: '同名冲突',
         running: '处理中',
-        success: '创建并启用成功',
+        success: '创建、启用并同步成功',
         partial: '部分完成',
         failed: '创建失败'
     });
@@ -1571,11 +1571,16 @@ function createPlacementBulkUpload() {
         return String(Object.is(number, -0) ? 0 : number);
     }
 
-    function buildPlacementName(prefix, appName, rowName, mode, fixedPrice) {
+    function buildPlacementName(prefix, appName, rowName, mode, fixedPrice, type, includeType) {
         const base = cleanText(prefix) || cleanText(appName);
         const middle = cleanText(rowName);
         const suffix = mode === 'cpm' ? formatNumber(fixedPrice) : 'bidding';
-        return `${base}-${middle}-${suffix}`;
+        const parts = [base, middle];
+        if (includeType && normalizeType(type)) {
+            parts.push(normalizeType(type));
+        }
+        parts.push(suffix);
+        return parts.join('-');
     }
 
     function validateHeaders(headerRow) {
@@ -1660,7 +1665,9 @@ function createPlacementBulkUpload() {
                     opts.appName,
                     row.sourceName,
                     row.mode,
-                    row.fixedPrice
+                    row.fixedPrice,
+                    row.type,
+                    opts.includeType
                 );
             } else {
                 row.name = '';
@@ -1905,6 +1912,10 @@ function createPlacementBulkUpload() {
             context.onPhase && context.onPhase('正在启用广告位');
             await context.api.activatePlacement({ id: placementId, status: 'active' });
 
+            stage = 'sync';
+            context.onPhase && context.onPhase('正在同步广告位');
+            await context.api.syncPlacement({ id: placementId });
+
             return { placementId };
         } catch (error) {
             throw markExecutionError(error, stage, placementId);
@@ -1931,6 +1942,7 @@ function createPlacementBulkUpload() {
         const BTN_ID = 'apicmob-placement-bulk-upload-btn';
         const MODAL_ID = 'apicmob-placement-bulk-upload-modal';
         const STYLE_ID = 'apicmob-placement-bulk-upload-style';
+        const INCLUDE_TYPE_KEY = 'apicmob-placement-bulk-upload-include-type';
         let sniffedVersion = '';
         let button = null;
         let running = false;
@@ -2042,7 +2054,8 @@ function createPlacementBulkUpload() {
             addPlacement: (data) => request('/cms2/ssp/publisher/placement/add', { data }),
             setSettlementMode: (data) => request('/cms2/ssp/publisher/placement/setSettlementMode', { data }),
             addSettlement: (data) => request('/cms2/ssp/publisher/placement/settlement/add', { data }),
-            activatePlacement: (data) => request('/cms2/ssp/publisher/placement/status/update', { data })
+            activatePlacement: (data) => request('/cms2/ssp/publisher/placement/status/update', { data }),
+            syncPlacement: (data) => request('/cms2/ssp/publisher/placement/sync', { data })
         };
 
         function isVisible(element) {
@@ -2198,6 +2211,8 @@ function createPlacementBulkUpload() {
                     border-radius: 4px; color: #303133; background: #fff;
                 }
                 .apu-input:focus { outline: 0; border-color: #1677ff; }
+                .apu-field .apu-checkbox { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; cursor: pointer; }
+                .apu-checkbox input { margin: 0; flex: none; accent-color: #1677ff; }
                 .apu-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
                 .apu-file-name { color: #606266; overflow-wrap: anywhere; }
                 .apu-tip, .apu-error, .apu-summary {
@@ -2414,6 +2429,7 @@ function createPlacementBulkUpload() {
                     <div class="apu-field">
                         <label>广告位名称前缀（留空时使用应用名称）</label>
                         <input class="apu-input" data-role="prefix" placeholder="${esc(context.app.name)}">
+                        <label class="apu-checkbox"><input type="checkbox" data-role="include-type">名称包含位置类型</label>
                     </div>
                 </div>
                 <div class="apu-field" style="margin-top:14px">
@@ -2432,6 +2448,12 @@ function createPlacementBulkUpload() {
                 <div data-role="preview"></div>`;
 
             const prefixInput = ui.body.querySelector('[data-role="prefix"]');
+            const includeTypeInput = ui.body.querySelector('[data-role="include-type"]');
+            try {
+                includeTypeInput.checked = win.localStorage.getItem(INCLUDE_TYPE_KEY) === 'true';
+            } catch (error) {
+                includeTypeInput.checked = false;
+            }
             const fileInput = ui.body.querySelector('[data-role="file"]');
             const fileName = ui.body.querySelector('[data-role="file-name"]');
             const message = ui.body.querySelector('[data-role="message"]');
@@ -2463,14 +2485,15 @@ function createPlacementBulkUpload() {
                 refreshExecuteButton();
                 setMessage('正在校验 Excel 并加载已有广告位…', false);
                 try {
-                    const rows = normalizeRows(state.matrix, {
-                        prefix: prefixInput.value,
-                        appName: context.app.name
-                    });
-                    resolveTypeIds(rows, context.typeList);
                     if (reloadExisting || !state.existing) {
                         state.existing = await listPlacements(context.publisherId, context.app.id, '');
                     }
+                    const rows = normalizeRows(state.matrix, {
+                        prefix: prefixInput.value,
+                        appName: context.app.name,
+                        includeType: includeTypeInput.checked
+                    });
+                    resolveTypeIds(rows, context.typeList);
                     classifyRows(rows, state.existing, {
                         appId: context.app.id
                     });
@@ -2491,6 +2514,14 @@ function createPlacementBulkUpload() {
             prefixInput.addEventListener('input', () => {
                 win.clearTimeout(prefixTimer);
                 prefixTimer = win.setTimeout(() => rebuildPreview(false), 250);
+            });
+            includeTypeInput.addEventListener('change', () => {
+                try {
+                    win.localStorage.setItem(INCLUDE_TYPE_KEY, String(includeTypeInput.checked));
+                } catch (error) {
+                    // The current selection still works when browser storage is unavailable.
+                }
+                rebuildPreview(false);
             });
             chooseButton.addEventListener('click', () => fileInput.click());
             templateButton.addEventListener('click', () => {
@@ -2529,7 +2560,8 @@ function createPlacementBulkUpload() {
                     state.existing = await listPlacements(context.publisherId, context.app.id, '');
                     const freshRows = normalizeRows(state.matrix, {
                         prefix: prefixInput.value,
-                        appName: context.app.name
+                        appName: context.app.name,
+                        includeType: includeTypeInput.checked
                     });
                     resolveTypeIds(freshRows, context.typeList);
                     classifyRows(freshRows, state.existing, { appId: context.app.id });
@@ -2550,7 +2582,7 @@ function createPlacementBulkUpload() {
                     refreshExecuteButton();
                     return;
                 }
-                if (!win.confirm(`将在应用「${context.app.name}」创建并启用 ${ready.length} 个广告位，是否继续？`)) {
+                if (!win.confirm(`将在应用「${context.app.name}」创建、启用并同步 ${ready.length} 个广告位，是否继续？`)) {
                     return;
                 }
 
@@ -2559,6 +2591,7 @@ function createPlacementBulkUpload() {
                 closeButton.disabled = true;
                 ui.close.disabled = true;
                 prefixInput.disabled = true;
+                includeTypeInput.disabled = true;
                 fileInput.disabled = true;
                 chooseButton.disabled = true;
                 templateButton.disabled = true;
@@ -2596,9 +2629,13 @@ function createPlacementBulkUpload() {
                             resolve: '广告位可能已创建，但无法定位 ID',
                             mode: '广告位已创建，设置结算模式失败',
                             settlement: '广告位及结算模式已创建，创建结算规则失败',
-                            activation: '广告位及结算规则已创建，启用失败'
+                            activation: '广告位及结算规则已创建，启用失败',
+                            sync: '广告位已创建并启用，同步失败'
                         };
                         row.reason = `${stageLabels[error.bulkStage] || '处理失败'}：${error.message}`;
+                        if (row.placementId) {
+                            row.reason += `；广告位 ID：${row.placementId}`;
+                        }
                     }
                     renderRows(preview, state.rows);
                 }

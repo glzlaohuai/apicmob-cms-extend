@@ -286,6 +286,33 @@ test('builds names with prefix fallback and normalized prices', () => {
     assert.equal(core.buildPlacementName('', ' App Name ', 'Reward', 'bidding', null), 'App Name-Reward-bidding');
 });
 
+test('includes normalized placement types only when the naming switch is enabled', () => {
+    assert.equal(core.buildPlacementName('P', 'App', 'Home', 'cpm', 2.5, ' Banner ', true), 'P-Home-banner-2.5');
+    assert.equal(core.buildPlacementName('', ' App ', 'Home', 'bidding', null, 'native', true), 'App-Home-native-bidding');
+    assert.equal(core.buildPlacementName('P', 'App', 'Home', 'cpm', 2.5, 'banner', false), 'P-Home-2.5');
+
+    const rows = core.normalizeRows(validMatrix(), { prefix: 'P', appName: 'App', includeType: true });
+    assert.deepEqual(rows.map((row) => row.name), [
+        'P-Home-banner-2.5',
+        'P-Open-interstitial-bidding',
+        'P-Reward-incentivized-bidding',
+        'P-Feed-native-1',
+        'P-Launch-splash-3'
+    ]);
+});
+
+test('type names distinguish different types while still rejecting duplicates of the same type', () => {
+    const matrix = [
+        core.HEADERS,
+        ['Home', 'banner', 'cpm', 2, '', ''],
+        ['Home', 'interstitial', 'cpm', 2, '', '']
+    ];
+    const options = { prefix: 'P', appName: 'A', includeType: true };
+    assert.deepEqual(core.normalizeRows(matrix, options).map((row) => row.status), ['ready', 'ready']);
+    matrix.push(['Home', 'banner', 'cpm', 2, '', '']);
+    assert.deepEqual(core.normalizeRows(matrix, options).map((row) => row.status), ['invalid', 'ready', 'invalid']);
+});
+
 test('detects duplicate generated names inside one workbook', () => {
     const rows = core.normalizeRows([
         core.HEADERS,
@@ -429,7 +456,7 @@ test('classifies matching records as skipped and different records as conflicts'
     assert.equal(rows[1].status, 'conflict');
 });
 
-test('executes add, settlement mode, settlement, then activation in order', async () => {
+test('executes add, settlement mode, settlement, activation, then sync in order', async () => {
     const rows = core.normalizeRows([
         core.HEADERS,
         ['Home', 'banner', 'cpm', 2.5, '', '']
@@ -448,14 +475,16 @@ test('executes add, settlement mode, settlement, then activation in order', asyn
             },
             setSettlementMode: async (payload) => calls.push(['mode', payload]),
             addSettlement: async (payload) => calls.push(['settlement', payload]),
-            activatePlacement: async (payload) => calls.push(['activation', payload])
+            activatePlacement: async (payload) => calls.push(['activation', payload]),
+            syncPlacement: async (payload) => calls.push(['sync', payload])
         },
         resolveCreatedId: async () => assert.fail('fallback ID lookup should not run')
     });
 
     assert.equal(result.placementId, 'placement-1');
-    assert.deepEqual(calls.map(([name]) => name), ['add', 'mode', 'settlement', 'activation']);
+    assert.deepEqual(calls.map(([name]) => name), ['add', 'mode', 'settlement', 'activation', 'sync']);
     assert.deepEqual(calls[3][1], { id: 'placement-1', status: 'active' });
+    assert.deepEqual(calls[4][1], { id: 'placement-1' });
 });
 
 test('uses fallback ID lookup and reports activation as a partial stage', async () => {
@@ -477,7 +506,8 @@ test('uses fallback ID lookup and reports activation as a partial stage', async 
             activatePlacement: async () => {
                 calls.push('activation');
                 throw new Error('cannot activate');
-            }
+            },
+            syncPlacement: async () => assert.fail('sync must not run after activation fails')
         },
         resolveCreatedId: async () => 'new-id'
     }), (error) => {
@@ -488,4 +518,47 @@ test('uses fallback ID lookup and reports activation as a partial stage', async 
     });
 
     assert.deepEqual(calls, ['mode', 'settlement', 'activation']);
+});
+
+test('waits for sync and preserves the created ID when sync fails', async () => {
+    const row = core.normalizeRows(validMatrix(), { appName: 'App' })[0];
+    core.resolveTypeIds([row], TYPE_LIST);
+    const phases = [];
+    const knownIds = new Set();
+    let rejectSync;
+    let signalSync;
+    const syncStarted = new Promise((resolve) => { signalSync = resolve; });
+    const syncResponse = new Promise((resolve, reject) => { rejectSync = reject; });
+    let finished = false;
+    const execution = core.executePlacementRow(row, {
+        publisherId: 'publisher-1',
+        appId: 'app-1',
+        knownIds,
+        onPhase: (phase) => phases.push(phase),
+        api: {
+            addPlacement: async () => ({ result: null }),
+            setSettlementMode: async () => {},
+            addSettlement: async () => {},
+            activatePlacement: async () => {},
+            syncPlacement: async (payload) => {
+                assert.deepEqual(payload, { id: 'resolved-id' });
+                signalSync();
+                return syncResponse;
+            }
+        },
+        resolveCreatedId: async () => 'resolved-id'
+    });
+    execution.then(() => { finished = true; }, () => { finished = true; });
+
+    await syncStarted;
+    assert.equal(finished, false);
+    assert.equal(phases.at(-1), '正在同步广告位');
+    assert.equal(knownIds.has('resolved-id'), true);
+    rejectSync(new Error('sync unavailable'));
+    await assert.rejects(execution, (error) => {
+        assert.equal(error.bulkStage, 'sync');
+        assert.equal(error.placementId, 'resolved-id');
+        assert.match(error.message, /sync unavailable/);
+        return true;
+    });
 });

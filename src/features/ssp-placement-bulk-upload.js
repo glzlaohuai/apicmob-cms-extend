@@ -17,6 +17,8 @@
         splash: Object.freeze({ width: 9, height: 16 })
     });
     const TYPE_CONFIG_KEY = 'apicmob-placement-bulk-upload-type-sizes';
+    const AUTO_DSP_KEY = 'apicmob-placement-bulk-upload-auto-dsp';
+    const RESULT_HEADERS = ['位置ID', '位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'];
     const UNIT = Object.freeze({ cpm: 2, bidding: 4 });
     const STATUS_LABELS = Object.freeze({
         invalid: '校验失败',
@@ -123,9 +125,13 @@
         while (actual.length && !actual[actual.length - 1]) {
             actual.pop();
         }
-        const expected = actual.length === HEADERS.length - 1 ? HEADERS.slice(0, -1) : HEADERS;
-        if (actual.length !== expected.length
-            || actual.some((value, index) => value !== expected[index])) {
+        const inputCount = actual[HEADERS.length - 1] === '尺寸' ? HEADERS.length : HEADERS.length - 1;
+        const expected = HEADERS.slice(0, inputCount);
+        const extra = actual.slice(inputCount);
+        if (actual.length < expected.length
+            || expected.some((value, index) => actual[index] !== value)
+            || extra.some((value) => !RESULT_HEADERS.includes(value))
+            || new Set(extra).size !== extra.length) {
             throw new Error(`Excel 第一行必须严格为：${HEADERS.join('、')}（兼容不含尺寸列的旧模板）`);
         }
     }
@@ -148,6 +154,7 @@
 
             const row = {
                 rowNumber: index + 2,
+                publicPlacementId: '',
                 sourceName: cleanText(values[0]),
                 type: normalizeType(values[1]),
                 mode: normalizeMode(values[2]),
@@ -401,6 +408,7 @@
             }
             row.status = 'skipped';
             row.placementId = matches.length === 1 ? matches[0].id || '' : '';
+            row.publicPlacementId = matches.length === 1 ? cleanText(matches[0].placement_id) : '';
             if (matches.length === 1 && matchesExisting(row, matches[0], context)) {
                 row.reason = '同名广告位及结算配置已存在，保留当前启用状态';
             } else {
@@ -447,7 +455,8 @@
             const checkedRow = { ...row };
             classifyRows([checkedRow], existing, context);
             if (checkedRow.status === 'skipped') {
-                return { skipped: true, placementId: checkedRow.placementId, reason: checkedRow.reason };
+                return { skipped: true, placementId: checkedRow.placementId,
+                    publicPlacementId: checkedRow.publicPlacementId, reason: checkedRow.reason };
             }
 
             stage = 'add';
@@ -500,8 +509,157 @@
         return body && Array.isArray(body.data) ? body.data : [];
     }
 
+    function readAutoDsp(win) {
+        try {
+            return win.localStorage.getItem(AUTO_DSP_KEY) !== 'false';
+        } catch (error) {
+            return true;
+        }
+    }
+
+    function writeWorkbookResults(xlsx, book, sheetName, rows) {
+        const sheet = book && book.Sheets && book.Sheets[sheetName];
+        if (!sheet) {
+            throw new Error('找不到原 Excel 工作表，无法回填结果');
+        }
+        const header = xlsx.utils.sheet_to_json(sheet, { header: 1, range: 0, blankrows: true, defval: '' })[0] || [];
+        while (header.length && isBlank(header[header.length - 1])) {
+            header.pop();
+        }
+        const columns = RESULT_HEADERS.map((name) => {
+            let column = header.findIndex((value) => cleanText(value) === name);
+            if (column < 0) {
+                column = header.length;
+                header.push(name);
+            }
+            xlsx.utils.sheet_add_aoa(sheet, [[name]], { origin: { r: 0, c: column } });
+            return column;
+        });
+        rows.forEach((row) => {
+            const values = [row.publicPlacementId, row.placementId, row.integrationId, row.dspPlacementId,
+                STATUS_LABELS[row.status] || row.status, row.reason || row.phase];
+            values.forEach((value, index) => {
+                xlsx.utils.sheet_add_aoa(sheet, [[cleanText(value)]], {
+                    origin: { r: row.rowNumber - 1, c: columns[index] }
+                });
+            });
+        });
+        return book;
+    }
+
+    function requireOne(rows, predicate, label) {
+        const matches = rows.filter(predicate);
+        if (matches.length !== 1 || isBlank(matches[0].id)) {
+            throw new Error(`${label}匹配到 ${matches.length} 条记录，无法唯一确定`);
+        }
+        return matches[0];
+    }
+
+    function assertParent(record, expected, label) {
+        Object.keys(expected).forEach((key) => {
+            if (isBlank(record && record[key]) || String(record[key]) !== String(expected[key])) {
+                throw new Error(`${label}的 ${key} 不匹配，停止添加 DSP 联盟位置`);
+            }
+        });
+    }
+
+    async function resolveDspScope(context) {
+        const { sdkList, sdkRead, appId, publisherId } = context;
+        const appBody = await context.readApp(appId);
+        const app = appBody && appBody.result;
+        assertParent(app, { id: appId, publisher_id: publisherId }, 'SSP 应用');
+        if (!['android', 'ios'].includes(app.os) || isBlank(app.bundle_id)) {
+            throw new Error('当前应用缺少可核对的系统或包名');
+        }
+        const supplies = await sdkRead('/cms2/sdk/supply/all');
+        const supply = requireOne(listOf(supplies), (item) => String(item.publisher_id) === String(publisherId), 'SDK 供给流量');
+        const apps = await sdkList('/cms2/sdk/supply/app/index', { supply_id: supply.id });
+        const sdkApp = requireOne(apps, (item) => String(item.id) === String(appId), 'SDK 应用');
+        assertParent(sdkApp, { supply_id: supply.id, os: app.os, bundle_id: app.bundle_id }, 'SDK 应用');
+        const networks = await sdkRead('/cms2/sdk/network/all');
+        const network = requireOne(listOf(networks), (item) => cleanText(item.network).toLowerCase() === 'appicdsp', 'appicdsp 联盟');
+        return { supplyId: supply.id, appId, os: app.os, bundleId: app.bundle_id, networkId: network.id };
+    }
+
+    async function addDspPlacement(row, scope, api) {
+        const { sdkList, sdkRead, sdkAdd } = api;
+        const parent = { supply_id: scope.supplyId, supply_app_id: scope.appId };
+        const placements = await sdkList('/cms2/sdk/supply/placement/index', parent);
+        const placement = requireOne(placements, (item) => String(item.id) === String(row.placementId), 'SDK 供给位置');
+        assertParent(placement, { ...parent, placement_id: row.publicPlacementId,
+            type: row.type, supply_app_os: scope.os, supply_app_bundle_id: scope.bundleId }, 'SDK 供给位置');
+        const integrations = await sdkList('/cms2/sdk/integration/index', { ...parent, supply_placement_id: placement.id });
+        const integration = requireOne(integrations, (item) => String(item.supply_placement_id) === String(placement.id), 'SDK 集成');
+        assertParent(integration, { ...parent, supply_placement_placement_id: row.publicPlacementId }, 'SDK 集成');
+        row.integrationId = integration.id;
+        const detailBody = await sdkRead('/cms2/sdk/integration/detail', { id: integration.id });
+        const rawDetail = detailBody && detailBody.result;
+        const detail = rawDetail && { ...rawDetail,
+            supply_app_id: rawDetail.supply_app_id ?? rawDetail.publisher_app_id,
+            supply_placement_id: rawDetail.supply_placement_id ?? rawDetail.publisher_placement_id };
+        assertParent(detail, { id: integration.id, supply_app_id: scope.appId, supply_placement_id: placement.id }, '集成详情');
+        const channelBody = await sdkRead('/cms2/sdk/integration/detail/list', { id: integration.id });
+        if (!Array.isArray(channelBody && channelBody.result)) {
+            throw new Error('集成渠道列表格式异常');
+        }
+        const channel = requireOne(channelBody.result, (item) => (
+            Object.prototype.hasOwnProperty.call(item, 'cohort_id') && isBlank(item.cohort_id)
+        ), '默认渠道');
+        assertParent(channel, { integration_id: integration.id }, '默认渠道');
+        if (!Array.isArray(channel.cohort_placement_list)) {
+            throw new Error('默认渠道的联盟位置列表格式异常');
+        }
+        const networkApps = await sdkList('/cms2/sdk/network/app/index', { network_id: scope.networkId });
+        const networkApp = requireOne(networkApps, (item) => String(item.supply_app_id) === String(scope.appId), 'DSP 联盟应用');
+        assertParent(networkApp, { network_id: scope.networkId, os: scope.os, bundle_id: scope.bundleId }, 'DSP 联盟应用');
+        const networkPlacements = await sdkList('/cms2/sdk/network/placement/index', {
+            network_id: scope.networkId, network_app_id: networkApp.id
+        });
+        const networkPlacement = requireOne(networkPlacements, (item) => String(item.placement_id) === String(row.publicPlacementId), 'DSP 联盟位置');
+        assertParent(networkPlacement, { network_id: scope.networkId, network_app_id: networkApp.id,
+            placement_type_type: row.type }, 'DSP 联盟位置');
+        row.dspPlacementId = networkPlacement.id;
+        const existing = channel.cohort_placement_list.filter((item) => String(item.network_placement_id) === String(networkPlacement.id));
+        if (existing.length > 1) {
+            throw new Error('默认渠道存在重复的 DSP 联盟位置绑定');
+        }
+        if (existing.length === 1) {
+            assertParent(existing[0], { integration_id: integration.id, integration_channel_id: channel.id }, '已有 DSP 绑定');
+            return { skipped: true, networkPlacementId: networkPlacement.id };
+        }
+        const candidates = await sdkList('/cms2/sdk/integration/placement/add/index', {
+            integration_id: integration.id, integration_channel_id: channel.id, supply_app_id: scope.appId
+        });
+        const candidate = requireOne(candidates, (item) => String(item.id) === String(networkPlacement.id), 'DSP 联盟位置候选');
+        assertParent(candidate, { network_id: scope.networkId, network_app_id: networkApp.id,
+            placement_id: row.publicPlacementId, placement_type_type: row.type,
+            network_app_os: scope.os, network_app_bundle_id: scope.bundleId }, 'DSP 联盟位置候选');
+        const adapters = Array.isArray(candidate.integration) ? candidate.integration.filter((value) => typeof value === 'string' && value) : [];
+        const adapter = adapters.includes('c2s') ? 'c2s' : adapters.length === 1 ? adapters[0] : '';
+        if (!adapter) {
+            throw new Error('DSP 联盟位置没有可唯一选择的集成方式');
+        }
+        await sdkAdd('/cms2/sdk/integration/placement/add', {
+            integration_id: integration.id,
+            integration_channel_id: channel.id,
+            network_placement_list: [{ network_placement_id: networkPlacement.id, integration: adapter }]
+        });
+        const updated = await sdkRead('/cms2/sdk/integration/detail/list', { id: integration.id });
+        if (!Array.isArray(updated && updated.result)) {
+            throw new Error('添加后无法读取集成渠道');
+        }
+        const updatedChannel = requireOne(updated.result, (item) => String(item.id) === String(channel.id), '添加后的默认渠道');
+        const bindings = updatedChannel.cohort_placement_list;
+        const binding = Array.isArray(bindings) && requireOne(bindings, (item) => String(item.network_placement_id) === String(networkPlacement.id), '添加后的 DSP 绑定');
+        assertParent(binding, { integration_id: integration.id, integration_channel_id: channel.id, integration: adapter }, '添加后的 DSP 绑定');
+        return { skipped: false, networkPlacementId: networkPlacement.id };
+    }
+
     function boot(win, runtime) {
-        const API_HOST = 'https://cms-ssp-api.apicmob.com/api';
+        const API_HOSTS = {
+            ssp: 'https://cms-ssp-api.apicmob.com/api',
+            sdk: 'https://cms-sdk-api.apicmob.com/api'
+        };
         const FALLBACK_VERSION = '8.2.34';
         const ROUTE_PATH = '/ssp/media-details';
         const BTN_ID = 'apicmob-placement-bulk-upload-btn';
@@ -569,9 +727,9 @@
             return routePath() === ROUTE_PATH && String(query.interface || '').toLowerCase() === 'sdk';
         }
 
-        async function request(path, options) {
+        async function request(path, options, service) {
             const opts = options || {};
-            const url = new URL(API_HOST + path);
+            const url = new URL(API_HOSTS[service || 'ssp'] + path);
             Object.keys(opts.params || {}).forEach((key) => {
                 const value = opts.params[key];
                 if (value !== undefined && value !== null) {
@@ -616,6 +774,7 @@
             appAll: (publisherId) => request('/cms2/ssp/publisher/app/all', {
                 params: { publisher_id: publisherId }
             }),
+            appDetail: (id) => request('/cms2/ssp/publisher/app/detail', { params: { id } }),
             typeAll: (publisherId) => request('/cms2/ssp/publisher/placement/type/all', {
                 params: { publisher_id: publisherId }
             }),
@@ -625,6 +784,39 @@
             addSettlement: (data) => request('/cms2/ssp/publisher/placement/settlement/add', { data }),
             activatePlacement: (data) => request('/cms2/ssp/publisher/placement/status/update', { data }),
             syncPlacement: (data) => request('/cms2/ssp/publisher/placement/sync', { data })
+        };
+
+        const sdkApi = {
+            sdkRead: (path, params) => request(path, { params }, 'sdk'),
+            sdkAdd: (path, data) => request(path, { data }, 'sdk'),
+            sdkList: async (path, params) => {
+                const output = [];
+                const seen = new Set();
+                for (let page = 1; page <= 100; page += 1) {
+                    const body = await request(path, { params: { ...params, page, size: 100 } }, 'sdk');
+                    const list = body && body.result && body.result.list;
+                    const count = body && body.count != null ? Number(body.count) : NaN;
+                    if (!Array.isArray(list) || list.some((item) => !item || isBlank(item.id) || seen.has(String(item.id)))
+                        || new Set(list.map((item) => String(item.id))).size !== list.length) {
+                        throw new Error(`${path} 列表格式异常或存在重复分页`);
+                    }
+                    if (body.count != null && (!Number.isInteger(count) || count < 0)) {
+                        throw new Error(`${path} 列表总数异常`);
+                    }
+                    list.forEach((item) => { seen.add(String(item.id)); });
+                    output.push(...list);
+                    if (!list.length) {
+                        if (Number.isFinite(count) && output.length < count) {
+                            throw new Error(`${path} 列表未读取完整`);
+                        }
+                        return output;
+                    }
+                    if (Number.isFinite(count) ? output.length >= count : list.length < 100) {
+                        return output;
+                    }
+                }
+                throw new Error(`${path} 列表超过读取上限`);
+            }
         };
 
         function isVisible(element) {
@@ -781,7 +973,7 @@
                     padding: 14px 20px; border-bottom: 1px solid #ebeef5;
                 }
                 .apu-head { font-size: 15px; font-weight: 600; }
-                .apu-foot { justify-content: flex-end; gap: 10px; border-top: 1px solid #ebeef5; border-bottom: 0; }
+                .apu-foot { justify-content: flex-end; flex-wrap: wrap; gap: 10px; border-top: 1px solid #ebeef5; border-bottom: 0; }
                 .apu-body { padding: 18px 20px; overflow: auto; }
                 .apu-close { border: 0; background: transparent; color: #909399; cursor: pointer; font-size: 22px; }
                 .apu-close:hover { color: #1677ff; }
@@ -914,18 +1106,19 @@
                 reader.onerror = () => reject(new Error('读取 Excel 文件失败。'));
                 reader.onload = () => {
                     try {
-                        const book = win.XLSX.read(reader.result, { type: 'array' });
+                        const book = win.XLSX.read(reader.result, { type: 'array', cellStyles: true });
                         const firstName = book.SheetNames && book.SheetNames[0];
                         if (!firstName) {
                             throw new Error('Excel 中没有工作表。');
                         }
                         const matrix = win.XLSX.utils.sheet_to_json(book.Sheets[firstName], {
                             header: 1,
+                            range: 0,
                             defval: '',
                             raw: true,
-                            blankrows: false
+                            blankrows: true
                         });
-                        resolve(matrix);
+                        resolve({ book, sheetName: firstName, matrix });
                     } catch (error) {
                         reject(error);
                     }
@@ -1008,7 +1201,10 @@
                 rows: [],
                 existing: null,
                 fileName: '',
+                workbook: null,
+                sheetName: '',
                 parsing: false,
+                reading: false,
                 typeConfig: readTypeConfig(win)
             };
 
@@ -1058,7 +1254,11 @@
                 <div class="apu-tip">
                     支持 banner、interstitial、incentivized、native、splash。尺寸可填 320x50，留空使用默认尺寸。每行创建一个广告位；确认前只做读取和校验，不会修改 CMS。
                 </div>
+                <div class="apu-field apu-naming-options">
+                    <label class="apu-checkbox"><input type="checkbox" data-role="auto-dsp">自动添加 DSP 联盟位置</label>
+                </div>
                 <div data-role="message"></div>
+                <div data-role="export-message"></div>
                 <div data-role="preview"></div>`;
 
             const prefixInput = ui.body.querySelector('[data-role="prefix"]');
@@ -1075,6 +1275,9 @@
             const fileInput = ui.body.querySelector('[data-role="file"]');
             const fileName = ui.body.querySelector('[data-role="file-name"]');
             const message = ui.body.querySelector('[data-role="message"]');
+            const exportMessage = ui.body.querySelector('[data-role="export-message"]');
+            const autoDspInput = ui.body.querySelector('[data-role="auto-dsp"]');
+            autoDspInput.checked = readAutoDsp(win);
             const preview = ui.body.querySelector('[data-role="preview"]');
             const sizeInputs = Array.from(ui.body.querySelectorAll('[data-size-type]'));
             const saveSizesButton = ui.body.querySelector('[data-role="save-sizes"]');
@@ -1083,9 +1286,10 @@
             const chooseButton = ui.body.querySelector('[data-role="choose"]');
             const templateButton = ui.body.querySelector('[data-role="template"]');
             const closeButton = elementButton('关闭', 'el-button--default', () => closeModal(false));
+            const exportButton = elementButton('下载结果 Excel', 'el-button--default', () => downloadResults());
             const executeButton = elementButton('确认创建', 'el-button--primary', () => executeReadyRows());
             executeButton.disabled = true;
-            ui.footer.append(closeButton, executeButton);
+            ui.footer.append(closeButton, exportButton, executeButton);
 
             function setMessage(text, isError) {
                 message.innerHTML = text
@@ -1098,12 +1302,36 @@
                 const sizesDirty = sizeInputs.some((input) => (
                     input.value !== String(state.typeConfig[input.dataset.sizeType][input.dataset.dimension])
                 ));
-                executeButton.disabled = running || state.parsing || sizesDirty || count === 0;
+                executeButton.disabled = running || state.parsing || state.reading || sizesDirty || count === 0;
                 executeButton.querySelector('span').textContent = count ? `确认创建 ${count} 条` : '确认创建';
                 sizeInputs.forEach((input) => { input.disabled = running || state.parsing || preserveResult; });
                 saveSizesButton.disabled = running || state.parsing || preserveResult || !sizesDirty;
                 resetSizesButton.disabled = running || state.parsing || preserveResult;
+                autoDspInput.disabled = running || state.parsing || preserveResult;
+                exportButton.disabled = running || state.parsing || state.reading || !state.workbook
+                    || !state.rows.some((row) => row.placementId || ['success', 'partial', 'failed'].includes(row.status));
+                fileInput.disabled = running || state.parsing || state.reading || preserveResult;
+                chooseButton.disabled = fileInput.disabled;
             }
+
+            function downloadResults() {
+                try {
+                    const book = writeWorkbookResults(win.XLSX, state.workbook, state.sheetName, state.rows);
+                    const fileName = state.fileName.replace(/\.(xlsx|xls)$/i, '') + '-创建结果.xlsx';
+                    win.XLSX.writeFile(book, fileName);
+                    exportMessage.innerHTML = '<div class="apu-tip">结果 Excel 已导出</div>';
+                } catch (error) {
+                    exportMessage.innerHTML = `<div class="apu-error">结果 Excel 导出失败：${esc(error.message)}。可点击“下载结果 Excel”重试。</div>`;
+                }
+            }
+
+            autoDspInput.addEventListener('change', () => {
+                try {
+                    win.localStorage.setItem(AUTO_DSP_KEY, String(autoDspInput.checked));
+                } catch (error) {
+                    setMessage('自动添加 DSP 的开关保存失败，当前选择仅在本次窗口有效。', true);
+                }
+            });
 
             function setSizeStatus(text, isError) {
                 sizeStatus.textContent = text;
@@ -1146,7 +1374,7 @@
             refreshExecuteButton();
 
             async function rebuildPreview(reloadExisting) {
-                if (!state.matrix || state.parsing || running) {
+                if (!state.matrix || state.parsing || state.reading || running) {
                     return;
                 }
                 state.parsing = true;
@@ -1205,27 +1433,51 @@
                 }
             });
             fileInput.addEventListener('change', async () => {
+                if (running || state.parsing || state.reading || preserveResult) {
+                    return;
+                }
                 const file = fileInput.files && fileInput.files[0];
                 if (!file) {
                     return;
                 }
                 state.fileName = file.name;
+                state.reading = true;
+                refreshExecuteButton();
                 fileName.textContent = file.name;
                 setMessage('正在读取 Excel…', false);
                 try {
-                    state.matrix = await readWorkbook(file);
+                    const workbook = await readWorkbook(file);
+                    state.matrix = workbook.matrix;
+                    state.workbook = workbook.book;
+                    state.sheetName = workbook.sheetName;
+                    state.reading = false;
+                    exportMessage.innerHTML = '';
                     await rebuildPreview(true);
                 } catch (error) {
                     state.matrix = null;
+                    state.workbook = null;
                     state.rows = [];
                     preview.innerHTML = '';
                     setMessage(error.message, true);
                     refreshExecuteButton();
+                } finally {
+                    state.reading = false;
+                    refreshExecuteButton();
                 }
             });
 
+            async function readPlacementResult(row) {
+                const created = requireOne(await listPlacements(context.publisherId, context.app.id, row.name),
+                    (item) => String(item.id) === String(row.placementId), '新位置');
+                assertParent(created, { publisher_app_id: context.app.id, name: row.name }, '新位置');
+                if (isBlank(created.placement_id)) {
+                    throw new Error('新位置的展示 ID 为空');
+                }
+                row.publicPlacementId = cleanText(created.placement_id);
+            }
+
             async function executeReadyRows() {
-                if (executeButton.disabled || running || state.parsing || !state.matrix || !featureEnabled()) {
+                if (executeButton.disabled || running || state.parsing || state.reading || !state.matrix || !featureEnabled()) {
                     return;
                 }
                 running = true;
@@ -1259,9 +1511,21 @@
                     }
                     if (!ready.length) {
                         setMessage('重新检查后没有可创建的广告位，同名记录已跳过。', false);
+                        preserveResult = true;
+                        downloadResults();
                         return;
                     }
-                    if (!win.confirm(`将在应用「${context.app.name}」创建、启用并同步 ${ready.length} 个广告位，是否继续？`)) {
+                    const autoDsp = autoDspInput.checked;
+                    let dspScope = null;
+                    if (autoDsp) {
+                        setMessage('正在核对 DSP 联盟和当前应用…', false);
+                        dspScope = await resolveDspScope({ ...sdkApi, appId: context.app.id,
+                            publisherId: context.publisherId, readApp: api.appDetail });
+                    }
+                    if (!featureEnabled()) {
+                        return;
+                    }
+                    if (!win.confirm(`将在应用「${context.app.name}」创建、启用并同步 ${ready.length} 个广告位${autoDsp ? '，并添加 DSP 联盟位置' : ''}，是否继续？`)) {
                         return;
                     }
 
@@ -1274,6 +1538,7 @@
                         row.status = 'running';
                         row.phase = '等待执行';
                         renderRows(preview, state.rows);
+                        let completionStage = 'result';
                         try {
                             const result = await executePlacementRow(row, {
                                 publisherId: context.publisherId,
@@ -1288,12 +1553,28 @@
                                 }
                             });
                             row.placementId = result.placementId;
+                            row.publicPlacementId = result.publicPlacementId || '';
+                            if (!result.skipped) {
+                                row.phase = '正在读取位置 ID';
+                                renderRows(preview, state.rows);
+                                await readPlacementResult(row);
+                                if (autoDsp) {
+                                    completionStage = 'dsp';
+                                    row.phase = '正在添加 DSP 联盟位置';
+                                    renderRows(preview, state.rows);
+                                    await addDspPlacement(row, dspScope, sdkApi);
+                                }
+                            }
                             row.status = result.skipped ? 'skipped' : 'success';
                             row.phase = '';
                             row.reason = result.skipped ? result.reason : `广告位 ID：${result.placementId}`;
+                            if (!result.skipped && autoDsp) {
+                                row.reason += `；DSP 联盟位置已添加：${row.dspPlacementId}`;
+                            }
                         } catch (error) {
-                            row.placementId = error.placementId || '';
-                            row.status = ['check', 'add'].includes(error.bulkStage) ? 'failed' : 'partial';
+                            row.placementId = error.placementId || row.placementId || '';
+                            const stage = error.bulkStage || completionStage;
+                            row.status = ['check', 'add'].includes(stage) ? 'failed' : 'partial';
                             row.phase = '';
                             const stageLabels = {
                                 check: '同名检测失败，未创建广告位',
@@ -1302,11 +1583,20 @@
                                 mode: '广告位已创建，设置结算模式失败',
                                 settlement: '广告位及结算模式已创建，创建结算规则失败',
                                 activation: '广告位及结算规则已创建，启用失败',
-                                sync: '广告位已创建并启用，同步失败'
+                                sync: '广告位已创建并启用，同步失败',
+                                result: '广告位已创建，读取位置 ID 失败',
+                                dsp: '广告位已创建并同步，DSP 联盟位置添加失败'
                             };
-                            row.reason = `${stageLabels[error.bulkStage] || '处理失败'}：${error.message}`;
+                            row.reason = `${stageLabels[stage] || '处理失败'}：${error.message}`;
                             if (row.placementId) {
                                 row.reason += `；广告位 ID：${row.placementId}`;
+                                if (!row.publicPlacementId) {
+                                    try {
+                                        await readPlacementResult(row);
+                                    } catch (readError) {
+                                        row.reason += `；位置 ID 读取失败：${readError.message}`;
+                                    }
+                                }
                             }
                         }
                         renderRows(preview, state.rows);
@@ -1317,6 +1607,7 @@
                     const partial = state.rows.filter((row) => row.status === 'partial').length;
                     const failed = state.rows.filter((row) => row.status === 'failed').length;
                     setMessage(`处理完成：成功 ${success} 条，跳过 ${skipped} 条，部分完成 ${partial} 条，失败 ${failed} 条。`, partial > 0 || failed > 0);
+                    downloadResults();
                     triggerNativeQuery(context.table);
                 } catch (error) {
                     setMessage(error.message, true);
@@ -1442,12 +1733,18 @@
         HEADERS,
         TYPE_CONFIG,
         TYPE_CONFIG_KEY,
+        AUTO_DSP_KEY,
+        RESULT_HEADERS,
         UNIT,
         cleanText,
         parseSize,
         normalizeTypeConfig,
         readTypeConfig,
         saveTypeConfig,
+        readAutoDsp,
+        writeWorkbookResults,
+        resolveDspScope,
+        addDspPlacement,
         normalizeType,
         normalizeMode,
         parseNonNegativeNumber,

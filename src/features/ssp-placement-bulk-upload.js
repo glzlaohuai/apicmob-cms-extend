@@ -18,7 +18,8 @@
     });
     const TYPE_CONFIG_KEY = 'apicmob-placement-bulk-upload-type-sizes';
     const AUTO_DSP_KEY = 'apicmob-placement-bulk-upload-auto-dsp';
-    const RESULT_HEADERS = ['位置ID', '位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'];
+    const RESULT_HEADERS = ['位置ID'];
+    const LEGACY_RESULT_HEADERS = ['位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'];
     const UNIT = Object.freeze({ cpm: 2, bidding: 4 });
     const STATUS_LABELS = Object.freeze({
         invalid: '校验失败',
@@ -130,7 +131,7 @@
         const extra = actual.slice(inputCount);
         if (actual.length < expected.length
             || expected.some((value, index) => actual[index] !== value)
-            || extra.some((value) => !RESULT_HEADERS.includes(value))
+            || extra.some((value) => !RESULT_HEADERS.includes(value) && !LEGACY_RESULT_HEADERS.includes(value))
             || new Set(extra).size !== extra.length) {
             throw new Error(`Excel 第一行必须严格为：${HEADERS.join('、')}（兼容不含尺寸列的旧模板）`);
         }
@@ -526,22 +527,15 @@
         while (header.length && isBlank(header[header.length - 1])) {
             header.pop();
         }
-        const columns = RESULT_HEADERS.map((name) => {
-            let column = header.findIndex((value) => cleanText(value) === name);
-            if (column < 0) {
-                column = header.length;
-                header.push(name);
-            }
-            xlsx.utils.sheet_add_aoa(sheet, [[name]], { origin: { r: 0, c: column } });
-            return column;
-        });
+        const name = RESULT_HEADERS[0];
+        let column = header.findIndex((value) => cleanText(value) === name);
+        if (column < 0) {
+            column = header.length;
+        }
+        xlsx.utils.sheet_add_aoa(sheet, [[name]], { origin: { r: 0, c: column } });
         rows.forEach((row) => {
-            const values = [row.publicPlacementId, row.placementId, row.integrationId, row.dspPlacementId,
-                STATUS_LABELS[row.status] || row.status, row.reason || row.phase];
-            values.forEach((value, index) => {
-                xlsx.utils.sheet_add_aoa(sheet, [[cleanText(value)]], {
-                    origin: { r: row.rowNumber - 1, c: columns[index] }
-                });
+            xlsx.utils.sheet_add_aoa(sheet, [[cleanText(row.publicPlacementId)]], {
+                origin: { r: row.rowNumber - 1, c: column }
             });
         });
         return book;

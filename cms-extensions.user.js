@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.8
+// @version      1.2.9
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.8';
+    const VERSION = '1.2.9';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -1527,7 +1527,8 @@ function createPlacementBulkUpload() {
     });
     const TYPE_CONFIG_KEY = 'apicmob-placement-bulk-upload-type-sizes';
     const AUTO_DSP_KEY = 'apicmob-placement-bulk-upload-auto-dsp';
-    const RESULT_HEADERS = ['位置ID', '位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'];
+    const RESULT_HEADERS = ['位置ID'];
+    const LEGACY_RESULT_HEADERS = ['位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'];
     const UNIT = Object.freeze({ cpm: 2, bidding: 4 });
     const STATUS_LABELS = Object.freeze({
         invalid: '校验失败',
@@ -1639,7 +1640,7 @@ function createPlacementBulkUpload() {
         const extra = actual.slice(inputCount);
         if (actual.length < expected.length
             || expected.some((value, index) => actual[index] !== value)
-            || extra.some((value) => !RESULT_HEADERS.includes(value))
+            || extra.some((value) => !RESULT_HEADERS.includes(value) && !LEGACY_RESULT_HEADERS.includes(value))
             || new Set(extra).size !== extra.length) {
             throw new Error(`Excel 第一行必须严格为：${HEADERS.join('、')}（兼容不含尺寸列的旧模板）`);
         }
@@ -2035,22 +2036,15 @@ function createPlacementBulkUpload() {
         while (header.length && isBlank(header[header.length - 1])) {
             header.pop();
         }
-        const columns = RESULT_HEADERS.map((name) => {
-            let column = header.findIndex((value) => cleanText(value) === name);
-            if (column < 0) {
-                column = header.length;
-                header.push(name);
-            }
-            xlsx.utils.sheet_add_aoa(sheet, [[name]], { origin: { r: 0, c: column } });
-            return column;
-        });
+        const name = RESULT_HEADERS[0];
+        let column = header.findIndex((value) => cleanText(value) === name);
+        if (column < 0) {
+            column = header.length;
+        }
+        xlsx.utils.sheet_add_aoa(sheet, [[name]], { origin: { r: 0, c: column } });
         rows.forEach((row) => {
-            const values = [row.publicPlacementId, row.placementId, row.integrationId, row.dspPlacementId,
-                STATUS_LABELS[row.status] || row.status, row.reason || row.phase];
-            values.forEach((value, index) => {
-                xlsx.utils.sheet_add_aoa(sheet, [[cleanText(value)]], {
-                    origin: { r: row.rowNumber - 1, c: columns[index] }
-                });
+            xlsx.utils.sheet_add_aoa(sheet, [[cleanText(row.publicPlacementId)]], {
+                origin: { r: row.rowNumber - 1, c: column }
             });
         });
         return book;

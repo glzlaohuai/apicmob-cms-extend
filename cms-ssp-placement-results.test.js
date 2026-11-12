@@ -156,13 +156,16 @@ test('result workbooks remain valid imports for legacy and size-column templates
         const resultHeaders = headers.concat(core.RESULT_HEADERS);
         assert.doesNotThrow(() => core.validateHeaders(resultHeaders));
         const matrix = [resultHeaders, ['Banner', 'banner', 'cpm', 1, '', '',
-            ...(headers.length === 7 ? [''] : []), '1792704791349911', 'ssp-1']];
+            ...(headers.length === 7 ? [''] : []), '1792704791349911']];
         assert.equal(core.normalizeRows(matrix, { appName: 'App' })[0].status, 'ready');
         assert.throws(() => core.validateHeaders(resultHeaders.concat('位置ID')), /第一行必须严格/);
+        assert.doesNotThrow(() => core.validateHeaders(headers.concat(
+            '位置ID', '位置内部ID', '集成ID', 'DSP联盟位置ID', '创建状态', '处理结果'
+        )));
     }
 });
 
-test('result cells follow original Excel rows, store IDs as text and preserve other sheets', () => {
+test('result cells write only CMS position IDs to original rows and preserve other sheets', () => {
     const originalSheet = { header: core.HEADERS.slice() };
     const otherSheet = { A1: { f: 'SUM(1,2)', t: 'n', v: 3 }, '!cols': [{ wch: 30 }] };
     const book = { SheetNames: ['广告位', '说明'], Sheets: { 广告位: originalSheet, 说明: otherSheet } };
@@ -177,17 +180,16 @@ test('result cells follow original Excel rows, store IDs as text and preserve ot
     } };
     const rows = [{ rowNumber: 2, placementId: 'ssp-1', publicPlacementId: '99999999999999999',
         integrationId: 'integration-1', dspPlacementId: 'dsp-1', status: 'success', reason: '完成' },
-    { rowNumber: 5, placementId: 'ssp-2', publicPlacementId: '1792704791349912', status: 'partial', reason: 'DSP 失败' }];
+    { rowNumber: 5, placementId: 'ssp-2', publicPlacementId: '1792704791349912', status: 'partial', reason: 'DSP 失败' },
+    { rowNumber: 6, placementId: 'ssp-3', status: 'partial', reason: '位置 ID 读取失败' }];
     assert.equal(core.writeWorkbookResults(xlsx, book, '广告位', rows), book);
     assert.equal(writes.get('1,7'), '99999999999999999');
-    assert.equal(writes.get('1,8'), 'ssp-1');
-    assert.equal(writes.get('1,9'), 'integration-1');
-    assert.equal(writes.get('1,10'), 'dsp-1');
     assert.equal(writes.get('4,7'), '1792704791349912');
-    assert.equal(writes.get('4,11'), '部分完成');
+    assert.equal(writes.get('5,7'), '');
+    assert.deepEqual([...writes.keys()].sort(), ['0,7', '1,7', '4,7', '5,7']);
     assert.ok(![...writes.keys()].some((key) => key.startsWith('2,') || key.startsWith('3,')));
     assert.equal(book.Sheets.说明, otherSheet);
     assert.deepEqual(originalSheet.header.slice(0, 7), core.HEADERS);
     core.writeWorkbookResults(xlsx, book, '广告位', rows);
-    assert.equal(originalSheet.header.length, 7 + core.RESULT_HEADERS.length);
+    assert.deepEqual(originalSheet.header, core.HEADERS.concat('位置ID'));
 });

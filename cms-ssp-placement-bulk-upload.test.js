@@ -301,6 +301,26 @@ test('includes normalized placement types only when the naming switch is enabled
     ]);
 });
 
+test('prefix and placement type switches independently control generated names', () => {
+    const matrix = [
+        core.HEADERS,
+        ['Home', 'banner', 'cpm', 2.5, '', ''],
+        ['Feed', 'native', 'bidding', '', 1, 8]
+    ];
+    for (const prefix of ['Custom', '']) {
+        for (const includePrefix of [true, false]) {
+            for (const includeType of [true, false]) {
+                const rows = core.normalizeRows(matrix, { prefix, appName: 'App', includePrefix, includeType });
+                const start = includePrefix ? `${prefix || 'App'}-` : '';
+                assert.deepEqual(rows.map((row) => row.name), [
+                    `${start}Home-${includeType ? 'banner-' : ''}2.5`,
+                    `${start}Feed-${includeType ? 'native-' : ''}bidding`
+                ]);
+            }
+        }
+    }
+});
+
 test('type names distinguish different types while still rejecting duplicates of the same type', () => {
     const matrix = [
         core.HEADERS,

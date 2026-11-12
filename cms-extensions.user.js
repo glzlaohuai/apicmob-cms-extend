@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.3
+// @version      1.2.4
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.3';
+    const VERSION = '1.2.4';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -1571,11 +1571,11 @@ function createPlacementBulkUpload() {
         return String(Object.is(number, -0) ? 0 : number);
     }
 
-    function buildPlacementName(prefix, appName, rowName, mode, fixedPrice, type, includeType) {
+    function buildPlacementName(prefix, appName, rowName, mode, fixedPrice, type, includeType, includePrefix) {
         const base = cleanText(prefix) || cleanText(appName);
         const middle = cleanText(rowName);
         const suffix = mode === 'cpm' ? formatNumber(fixedPrice) : 'bidding';
-        const parts = [base, middle];
+        const parts = includePrefix === false ? [middle] : [base, middle];
         if (includeType && normalizeType(type)) {
             parts.push(normalizeType(type));
         }
@@ -1667,7 +1667,8 @@ function createPlacementBulkUpload() {
                     row.mode,
                     row.fixedPrice,
                     row.type,
-                    opts.includeType
+                    opts.includeType,
+                    opts.includePrefix
                 );
             } else {
                 row.name = '';
@@ -1942,6 +1943,7 @@ function createPlacementBulkUpload() {
         const BTN_ID = 'apicmob-placement-bulk-upload-btn';
         const MODAL_ID = 'apicmob-placement-bulk-upload-modal';
         const STYLE_ID = 'apicmob-placement-bulk-upload-style';
+        const INCLUDE_PREFIX_KEY = 'apicmob-placement-bulk-upload-include-prefix';
         const INCLUDE_TYPE_KEY = 'apicmob-placement-bulk-upload-include-type';
         let sniffedVersion = '';
         let button = null;
@@ -2211,7 +2213,8 @@ function createPlacementBulkUpload() {
                     border-radius: 4px; color: #303133; background: #fff;
                 }
                 .apu-input:focus { outline: 0; border-color: #1677ff; }
-                .apu-field .apu-checkbox { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; cursor: pointer; }
+                .apu-naming-options { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; }
+                .apu-field .apu-checkbox { display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer; }
                 .apu-checkbox input { margin: 0; flex: none; accent-color: #1677ff; }
                 .apu-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
                 .apu-file-name { color: #606266; overflow-wrap: anywhere; }
@@ -2429,7 +2432,10 @@ function createPlacementBulkUpload() {
                     <div class="apu-field">
                         <label>广告位名称前缀（留空时使用应用名称）</label>
                         <input class="apu-input" data-role="prefix" placeholder="${esc(context.app.name)}">
-                        <label class="apu-checkbox"><input type="checkbox" data-role="include-type">名称包含位置类型</label>
+                        <div class="apu-naming-options">
+                            <label class="apu-checkbox"><input type="checkbox" data-role="include-prefix">名称包含前缀</label>
+                            <label class="apu-checkbox"><input type="checkbox" data-role="include-type">名称包含位置类型</label>
+                        </div>
                     </div>
                 </div>
                 <div class="apu-field" style="margin-top:14px">
@@ -2448,12 +2454,16 @@ function createPlacementBulkUpload() {
                 <div data-role="preview"></div>`;
 
             const prefixInput = ui.body.querySelector('[data-role="prefix"]');
+            const includePrefixInput = ui.body.querySelector('[data-role="include-prefix"]');
             const includeTypeInput = ui.body.querySelector('[data-role="include-type"]');
             try {
+                includePrefixInput.checked = win.localStorage.getItem(INCLUDE_PREFIX_KEY) !== 'false';
                 includeTypeInput.checked = win.localStorage.getItem(INCLUDE_TYPE_KEY) === 'true';
             } catch (error) {
+                includePrefixInput.checked = true;
                 includeTypeInput.checked = false;
             }
+            prefixInput.disabled = !includePrefixInput.checked;
             const fileInput = ui.body.querySelector('[data-role="file"]');
             const fileName = ui.body.querySelector('[data-role="file-name"]');
             const message = ui.body.querySelector('[data-role="message"]');
@@ -2491,6 +2501,7 @@ function createPlacementBulkUpload() {
                     const rows = normalizeRows(state.matrix, {
                         prefix: prefixInput.value,
                         appName: context.app.name,
+                        includePrefix: includePrefixInput.checked,
                         includeType: includeTypeInput.checked
                     });
                     resolveTypeIds(rows, context.typeList);
@@ -2515,13 +2526,16 @@ function createPlacementBulkUpload() {
                 win.clearTimeout(prefixTimer);
                 prefixTimer = win.setTimeout(() => rebuildPreview(false), 250);
             });
-            includeTypeInput.addEventListener('change', () => {
-                try {
-                    win.localStorage.setItem(INCLUDE_TYPE_KEY, String(includeTypeInput.checked));
-                } catch (error) {
-                    // The current selection still works when browser storage is unavailable.
-                }
-                rebuildPreview(false);
+            [[includePrefixInput, INCLUDE_PREFIX_KEY], [includeTypeInput, INCLUDE_TYPE_KEY]].forEach(([input, key]) => {
+                input.addEventListener('change', () => {
+                    prefixInput.disabled = !includePrefixInput.checked;
+                    try {
+                        win.localStorage.setItem(key, String(input.checked));
+                    } catch (error) {
+                        // The current selection still works when browser storage is unavailable.
+                    }
+                    rebuildPreview(false);
+                });
             });
             chooseButton.addEventListener('click', () => fileInput.click());
             templateButton.addEventListener('click', () => {
@@ -2561,6 +2575,7 @@ function createPlacementBulkUpload() {
                     const freshRows = normalizeRows(state.matrix, {
                         prefix: prefixInput.value,
                         appName: context.app.name,
+                        includePrefix: includePrefixInput.checked,
                         includeType: includeTypeInput.checked
                     });
                     resolveTypeIds(freshRows, context.typeList);
@@ -2591,6 +2606,7 @@ function createPlacementBulkUpload() {
                 closeButton.disabled = true;
                 ui.close.disabled = true;
                 prefixInput.disabled = true;
+                includePrefixInput.disabled = true;
                 includeTypeInput.disabled = true;
                 fileInput.disabled = true;
                 chooseButton.disabled = true;

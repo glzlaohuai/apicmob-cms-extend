@@ -420,7 +420,7 @@ test('extracts returned placement IDs without treating false as an ID', () => {
     assert.equal(core.extractCreatedId({ result: {} }), '');
 });
 
-test('classifies matching records as skipped and different records as conflicts', () => {
+test('skips every existing name even when its settlement configuration differs', () => {
     const rows = core.normalizeRows([
         core.HEADERS,
         ['Home', 'banner', 'cpm', 2.5, '', ''],
@@ -473,10 +473,104 @@ test('classifies matching records as skipped and different records as conflicts'
     core.classifyRows(rows, [exact, conflict], { appId: 'app-1' });
     assert.equal(rows[0].status, 'skipped');
     assert.match(rows[0].reason, /保留当前启用状态/);
-    assert.equal(rows[1].status, 'conflict');
+    assert.equal(rows[1].status, 'skipped');
+    assert.equal(rows[1].placementId, 'existing-2');
 });
 
-test('executes add, settlement mode, settlement, activation, then sync in order', async () => {
+test('rechecks names before creation and skips records left by interrupted uploads', async () => {
+    const row = core.normalizeRows(validMatrix(), { appName: 'App' })[0];
+    const calls = [];
+    const context = {
+        appId: 'app-1',
+        findExistingPlacements: async (name) => {
+            calls.push('check');
+            assert.equal(name, row.name);
+            return [{ id: 'unfinished-id', name, publisher_app_id: 'app-1', settlement: [] }];
+        },
+        api: {
+            addPlacement: async () => { calls.push('add'); return { result: { id: 'duplicate-id' } }; },
+            setSettlementMode: async () => calls.push('mode'),
+            addSettlement: async () => calls.push('settlement'),
+            activatePlacement: async () => calls.push('activation'),
+            syncPlacement: async () => calls.push('sync')
+        }
+    };
+    const result = await core.executePlacementRow(row, context);
+    assert.deepEqual(calls, ['check']);
+    assert.equal(result.skipped, true);
+    assert.equal(result.placementId, 'unfinished-id');
+});
+
+test('checks exact names within the selected app and reports all existing duplicate IDs', () => {
+    const rows = core.normalizeRows(validMatrix(), { appName: 'App' });
+    core.classifyRows(rows, [
+        { id: 'unfinished', name: ` ${rows[0].name} `, publisher_app_id: 'app-1' },
+        { id: 'another-app', name: rows[1].name, publisher_app_id: 'app-2' },
+        { id: 'similar-name', name: `${rows[2].name}-other`, publisher_app_id: 'app-1' },
+        { id: 'duplicate-1', name: rows[3].name, publisher_app_id: 'app-1' },
+        { id: 'duplicate-2', name: rows[3].name, publisher_app_id: 'app-1' }
+    ], { appId: 'app-1' });
+    assert.deepEqual(rows.map((row) => row.status), ['skipped', 'ready', 'ready', 'skipped', 'ready']);
+    assert.equal(rows[0].placementId, 'unfinished');
+    assert.match(rows[3].reason, /2 个同名广告位/);
+    assert.match(rows[3].reason, /duplicate-1、duplicate-2/);
+});
+
+test('a failed name lookup prevents all creation requests', async () => {
+    const row = core.normalizeRows(validMatrix(), { appName: 'App' })[0];
+    const calls = [];
+    await assert.rejects(core.executePlacementRow(row, {
+        appId: 'app-1',
+        findExistingPlacements: async () => { throw new Error('lookup unavailable'); },
+        api: {
+            addPlacement: async () => { calls.push('add'); return { result: { id: 'new-id' } }; },
+            setSettlementMode: async () => calls.push('mode'),
+            addSettlement: async () => calls.push('settlement'),
+            activatePlacement: async () => calls.push('activation'),
+            syncPlacement: async () => calls.push('sync')
+        }
+    }), (error) => {
+        assert.equal(error.bulkStage, 'check');
+        assert.equal(error.placementId, '');
+        assert.match(error.message, /lookup unavailable/);
+        return true;
+    });
+    assert.deepEqual(calls, []);
+});
+
+test('a malformed name lookup fails before any creation request', async () => {
+    const row = core.normalizeRows(validMatrix(), { appName: 'App' })[0];
+    let created = false;
+    await assert.rejects(core.executePlacementRow(row, {
+        appId: 'app-1',
+        findExistingPlacements: async () => ({ list: [] }),
+        api: { addPlacement: async () => { created = true; } }
+    }), (error) => {
+        assert.equal(error.bulkStage, 'check');
+        assert.match(error.message, /数据格式异常/);
+        return true;
+    });
+    assert.equal(created, false);
+});
+
+test('waits for the fresh name lookup before deciding whether to create', async () => {
+    const row = core.normalizeRows(validMatrix(), { appName: 'App' })[0];
+    let finishLookup;
+    let created = false;
+    const execution = core.executePlacementRow(row, {
+        appId: 'app-1',
+        findExistingPlacements: () => new Promise((resolve) => { finishLookup = resolve; }),
+        api: { addPlacement: async () => { created = true; } }
+    });
+    assert.equal(created, false);
+    finishLookup([{ id: 'appeared-later', name: row.name }]);
+    const result = await execution;
+    assert.equal(result.skipped, true);
+    assert.equal(result.placementId, 'appeared-later');
+    assert.equal(created, false);
+});
+
+test('executes name check, add, settlement mode, settlement, activation, then sync in order', async () => {
     const rows = core.normalizeRows([
         core.HEADERS,
         ['Home', 'banner', 'cpm', 2.5, '', '']
@@ -488,6 +582,7 @@ test('executes add, settlement mode, settlement, activation, then sync in order'
         publisherId: 'publisher-1',
         appId: 'app-1',
         knownIds: new Set(),
+        findExistingPlacements: async () => { calls.push(['check']); return []; },
         api: {
             addPlacement: async (payload) => {
                 calls.push(['add', payload]);
@@ -502,9 +597,9 @@ test('executes add, settlement mode, settlement, activation, then sync in order'
     });
 
     assert.equal(result.placementId, 'placement-1');
-    assert.deepEqual(calls.map(([name]) => name), ['add', 'mode', 'settlement', 'activation', 'sync']);
-    assert.deepEqual(calls[3][1], { id: 'placement-1', status: 'active' });
-    assert.deepEqual(calls[4][1], { id: 'placement-1' });
+    assert.deepEqual(calls.map(([name]) => name), ['check', 'add', 'mode', 'settlement', 'activation', 'sync']);
+    assert.deepEqual(calls[4][1], { id: 'placement-1', status: 'active' });
+    assert.deepEqual(calls[5][1], { id: 'placement-1' });
 });
 
 test('uses fallback ID lookup and reports activation as a partial stage', async () => {
@@ -519,6 +614,7 @@ test('uses fallback ID lookup and reports activation as a partial stage', async 
         publisherId: 'publisher-1',
         appId: 'app-1',
         knownIds: new Set(['old-id']),
+        findExistingPlacements: async () => [],
         api: {
             addPlacement: async () => ({ code: 200, result: null }),
             setSettlementMode: async () => calls.push('mode'),
@@ -554,6 +650,7 @@ test('waits for sync and preserves the created ID when sync fails', async () => 
         publisherId: 'publisher-1',
         appId: 'app-1',
         knownIds,
+        findExistingPlacements: async () => [],
         onPhase: (phase) => phases.push(phase),
         api: {
             addPlacement: async () => ({ result: null }),

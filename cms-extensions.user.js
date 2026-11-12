@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.4
+// @version      1.2.5
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.4';
+    const VERSION = '1.2.5';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -1835,31 +1835,40 @@ function createPlacementBulkUpload() {
     function classifyRows(rows, existingList, context) {
         const byName = new Map();
         (existingList || []).forEach((item) => {
-            const matches = byName.get(item.name) || [];
+            if (item.publisher_app_id != null && context.appId != null
+                && String(item.publisher_app_id) !== String(context.appId)) {
+                return;
+            }
+            const name = cleanText(item.name);
+            const matches = byName.get(name) || [];
             matches.push(item);
-            byName.set(item.name, matches);
+            byName.set(name, matches);
         });
 
         rows.forEach((row) => {
             if (row.status === 'invalid') {
                 return;
             }
-            const matches = byName.get(row.name) || [];
+            const matches = byName.get(cleanText(row.name)) || [];
             if (!matches.length) {
                 row.status = 'ready';
                 row.reason = '';
+                row.placementId = '';
                 return;
             }
+            row.status = 'skipped';
+            row.placementId = matches.length === 1 ? matches[0].id || '' : '';
             if (matches.length === 1 && matchesExisting(row, matches[0], context)) {
-                row.status = 'skipped';
                 row.reason = '同名广告位及结算配置已存在，保留当前启用状态';
-                row.placementId = matches[0].id;
-                return;
+            } else {
+                row.reason = matches.length > 1
+                    ? `CMS 中已存在 ${matches.length} 个同名广告位，跳过创建，请核对已有记录`
+                    : '同名广告位已存在，跳过创建；配置可能尚未完成，请核对已有记录';
             }
-            row.status = 'conflict';
-            row.reason = matches.length > 1
-                ? 'CMS 中存在多个同名广告位'
-                : '同名广告位已存在，但类型、尺寸、默认字段或结算配置不同';
+            const ids = matches.map((item) => item.id).filter((id) => id != null && id !== '');
+            if (ids.length) {
+                row.reason += `；广告位 ID：${ids.join('、')}`;
+            }
         });
         return rows;
     }
@@ -1885,8 +1894,20 @@ function createPlacementBulkUpload() {
 
     async function executePlacementRow(row, context) {
         let placementId = '';
-        let stage = 'add';
+        let stage = 'check';
         try {
+            context.onPhase && context.onPhase('正在检查同名广告位');
+            const existing = await context.findExistingPlacements(row.name);
+            if (!Array.isArray(existing)) {
+                throw new Error('同名广告位查询返回的数据格式异常');
+            }
+            const checkedRow = { ...row };
+            classifyRows([checkedRow], existing, context);
+            if (checkedRow.status === 'skipped') {
+                return { skipped: true, placementId: checkedRow.placementId, reason: checkedRow.reason };
+            }
+
+            stage = 'add';
             context.onPhase && context.onPhase('正在创建广告位');
             const addBody = await context.api.addPlacement(buildPlacementPayload(row, context));
             placementId = extractCreatedId(addBody);
@@ -2028,6 +2049,9 @@ function createPlacementBulkUpload() {
                 headers: headers,
                 body: opts.data === undefined ? undefined : JSON.stringify(opts.data)
             });
+            if (response.ok === false) {
+                throw new Error(`${path} 请求失败（HTTP ${response.status}）`);
+            }
 
             let body;
             try {
@@ -2167,14 +2191,26 @@ function createPlacementBulkUpload() {
                     size: 100,
                     keyword: keyword || ''
                 });
-                const list = listOf(body);
+                const list = [body.result && body.result.list, body.result, body.data && body.data.list, body.data]
+                    .find(Array.isArray);
+                if (!list || list.some((item) => !item || typeof item.name !== 'string')) {
+                    throw new Error('广告位列表数据格式异常，无法检查同名广告位');
+                }
                 output.push(...list);
-                const count = Number(body && body.count);
-                if (list.length < 100 || (Number.isFinite(count) && output.length >= count)) {
-                    break;
+                const rawCount = [body.count, body.result && body.result.count, body.data && body.data.count]
+                    .find((value) => value != null && value !== '' && Number.isFinite(Number(value)));
+                const count = rawCount === undefined ? NaN : Number(rawCount);
+                if (!list.length) {
+                    if (Number.isFinite(count) && output.length < count) {
+                        throw new Error('广告位列表未读取完整，无法检查同名广告位');
+                    }
+                    return output;
+                }
+                if (Number.isFinite(count) ? output.length >= count : list.length < 100) {
+                    return output;
                 }
             }
-            return output;
+            throw new Error('广告位列表超过读取上限，无法检查同名广告位');
         }
 
         function injectStyle() {
@@ -2566,9 +2602,19 @@ function createPlacementBulkUpload() {
             });
 
             async function executeReadyRows() {
-                if (running || !featureEnabled()) {
+                if (running || state.parsing || !state.matrix || !featureEnabled()) {
                     return;
                 }
+                running = true;
+                closeButton.disabled = true;
+                ui.close.disabled = true;
+                prefixInput.disabled = true;
+                includePrefixInput.disabled = true;
+                includeTypeInput.disabled = true;
+                fileInput.disabled = true;
+                chooseButton.disabled = true;
+                templateButton.disabled = true;
+                refreshExecuteButton();
                 setMessage('正在重新检查已有广告位…', false);
                 try {
                     state.existing = await listPlacements(context.publisherId, context.app.id, '');
@@ -2582,89 +2628,88 @@ function createPlacementBulkUpload() {
                     classifyRows(freshRows, state.existing, { appId: context.app.id });
                     state.rows = freshRows;
                     renderRows(preview, state.rows);
+
+                    const ready = state.rows.filter((row) => row.status === 'ready');
+                    if (!featureEnabled()) {
+                        return;
+                    }
+                    if (!ready.length) {
+                        setMessage('重新检查后没有可创建的广告位，同名记录已跳过。', false);
+                        return;
+                    }
+                    if (!win.confirm(`将在应用「${context.app.name}」创建、启用并同步 ${ready.length} 个广告位，是否继续？`)) {
+                        return;
+                    }
+
+                    preserveResult = true;
+                    setMessage('正在顺序创建广告位，每条创建前会检查同名记录，请不要关闭页面。', false);
+                    const knownIds = new Set(state.existing.map((item) => String(item.id)));
+
+                    for (let index = 0; index < ready.length; index += 1) {
+                        const row = ready[index];
+                        row.status = 'running';
+                        row.phase = '等待执行';
+                        renderRows(preview, state.rows);
+                        try {
+                            const result = await executePlacementRow(row, {
+                                publisherId: context.publisherId,
+                                appId: context.app.id,
+                                api: api,
+                                knownIds: knownIds,
+                                findExistingPlacements: (name) => listPlacements(context.publisherId, context.app.id, name),
+                                resolveCreatedId: (targetRow, ids) => findCreatedPlacement(context, targetRow, ids),
+                                onPhase: (phase) => {
+                                    row.phase = phase;
+                                    renderRows(preview, state.rows);
+                                }
+                            });
+                            row.placementId = result.placementId;
+                            row.status = result.skipped ? 'skipped' : 'success';
+                            row.phase = '';
+                            row.reason = result.skipped ? result.reason : `广告位 ID：${result.placementId}`;
+                        } catch (error) {
+                            row.placementId = error.placementId || '';
+                            row.status = ['check', 'add'].includes(error.bulkStage) ? 'failed' : 'partial';
+                            row.phase = '';
+                            const stageLabels = {
+                                check: '同名检测失败，未创建广告位',
+                                add: '创建广告位失败',
+                                resolve: '广告位可能已创建，但无法定位 ID',
+                                mode: '广告位已创建，设置结算模式失败',
+                                settlement: '广告位及结算模式已创建，创建结算规则失败',
+                                activation: '广告位及结算规则已创建，启用失败',
+                                sync: '广告位已创建并启用，同步失败'
+                            };
+                            row.reason = `${stageLabels[error.bulkStage] || '处理失败'}：${error.message}`;
+                            if (row.placementId) {
+                                row.reason += `；广告位 ID：${row.placementId}`;
+                            }
+                        }
+                        renderRows(preview, state.rows);
+                    }
+
+                    const success = state.rows.filter((row) => row.status === 'success').length;
+                    const skipped = state.rows.filter((row) => row.status === 'skipped').length;
+                    const partial = state.rows.filter((row) => row.status === 'partial').length;
+                    const failed = state.rows.filter((row) => row.status === 'failed').length;
+                    setMessage(`处理完成：成功 ${success} 条，跳过 ${skipped} 条，部分完成 ${partial} 条，失败 ${failed} 条。`, partial > 0 || failed > 0);
+                    triggerNativeQuery(context.table);
                 } catch (error) {
                     setMessage(error.message, true);
-                    refreshExecuteButton();
-                    return;
-                }
-
-                const ready = state.rows.filter((row) => row.status === 'ready');
-                if (!featureEnabled()) {
-                    return;
-                }
-                if (!ready.length) {
-                    setMessage('重新检查后没有可创建的广告位。', true);
-                    refreshExecuteButton();
-                    return;
-                }
-                if (!win.confirm(`将在应用「${context.app.name}」创建、启用并同步 ${ready.length} 个广告位，是否继续？`)) {
-                    return;
-                }
-
-                running = true;
-                preserveResult = true;
-                closeButton.disabled = true;
-                ui.close.disabled = true;
-                prefixInput.disabled = true;
-                includePrefixInput.disabled = true;
-                includeTypeInput.disabled = true;
-                fileInput.disabled = true;
-                chooseButton.disabled = true;
-                templateButton.disabled = true;
-                refreshExecuteButton();
-                setMessage('正在顺序创建广告位，请不要关闭页面。', false);
-                const knownIds = new Set(state.existing.map((item) => String(item.id)));
-
-                for (let index = 0; index < ready.length; index += 1) {
-                    const row = ready[index];
-                    row.status = 'running';
-                    row.phase = '等待执行';
-                    renderRows(preview, state.rows);
-                    try {
-                        const result = await executePlacementRow(row, {
-                            publisherId: context.publisherId,
-                            appId: context.app.id,
-                            api: api,
-                            knownIds: knownIds,
-                            resolveCreatedId: (targetRow, ids) => findCreatedPlacement(context, targetRow, ids),
-                            onPhase: (phase) => {
-                                row.phase = phase;
-                                renderRows(preview, state.rows);
-                            }
-                        });
-                        row.placementId = result.placementId;
-                        row.status = 'success';
-                        row.phase = '';
-                        row.reason = `广告位 ID：${result.placementId}`;
-                    } catch (error) {
-                        row.placementId = error.placementId || '';
-                        row.status = error.bulkStage === 'add' ? 'failed' : 'partial';
-                        row.phase = '';
-                        const stageLabels = {
-                            add: '创建广告位失败',
-                            resolve: '广告位可能已创建，但无法定位 ID',
-                            mode: '广告位已创建，设置结算模式失败',
-                            settlement: '广告位及结算模式已创建，创建结算规则失败',
-                            activation: '广告位及结算规则已创建，启用失败',
-                            sync: '广告位已创建并启用，同步失败'
-                        };
-                        row.reason = `${stageLabels[error.bulkStage] || '处理失败'}：${error.message}`;
-                        if (row.placementId) {
-                            row.reason += `；广告位 ID：${row.placementId}`;
-                        }
+                } finally {
+                    running = false;
+                    closeButton.disabled = false;
+                    ui.close.disabled = false;
+                    if (!preserveResult) {
+                        prefixInput.disabled = !includePrefixInput.checked;
+                        includePrefixInput.disabled = false;
+                        includeTypeInput.disabled = false;
+                        fileInput.disabled = false;
+                        chooseButton.disabled = false;
+                        templateButton.disabled = false;
                     }
-                    renderRows(preview, state.rows);
+                    refreshExecuteButton();
                 }
-
-                running = false;
-                closeButton.disabled = false;
-                ui.close.disabled = false;
-                executeButton.disabled = true;
-                const success = state.rows.filter((row) => row.status === 'success').length;
-                const partial = state.rows.filter((row) => row.status === 'partial').length;
-                const failed = state.rows.filter((row) => row.status === 'failed').length;
-                setMessage(`处理完成：成功 ${success} 条，部分完成 ${partial} 条，失败 ${failed} 条。`, partial > 0 || failed > 0);
-                triggerNativeQuery(context.table);
             }
         }
 

@@ -233,7 +233,7 @@ test('runtime switch removes and restores the bulk entry without duplicate UI or
     assert.equal(watchers.length, 1);
 });
 
-test('normalizes all supported types and applies fixed sizes', () => {
+test('normalizes all supported types and applies initial default sizes', () => {
     const rows = core.normalizeRows(validMatrix(), { prefix: 'Loklok', appName: 'Fallback' });
 
     assert.deepEqual(rows.map((row) => [row.type, row.width, row.height]), [
@@ -243,6 +243,124 @@ test('normalizes all supported types and applies fixed sizes', () => {
         ['native', 9, 16],
         ['splash', 9, 16]
     ]);
+});
+
+test('parses positive integer sizes with common separators and rejects malformed sizes', () => {
+    for (const value of ['320x50', '320X50', ' 320 × 50 ', '320*50']) {
+        assert.deepEqual(core.parseSize(value), { width: 320, height: 50 });
+    }
+    for (const value of ['', null, 320, '320', '320x', 'x50', '0x50', '-1x50',
+        '320x0', '320x-1', '1.5x50', '320:50', '320x50px', '1e3x50',
+        '9007199254740992x50', '320x9007199254740992']) {
+        assert.equal(core.parseSize(value), null, String(value));
+    }
+});
+
+test('uses configured sizes for blank cells and Excel sizes for overrides', () => {
+    const typeConfig = {
+        banner: { width: 728, height: 90 },
+        interstitial: { width: 1080, height: 1920 },
+        native: { width: 1200, height: 628 }
+    };
+    const rows = core.normalizeRows([
+        core.HEADERS,
+        ['DefaultBanner', ' Banner ', 'cpm', 1, '', '', ''],
+        ['CustomBanner', 'banner', 'cpm', 1, '', '', '640x100'],
+        ['DefaultInterstitial', 'interstitial', 'bidding', '', 1, 8, '  '],
+        ['CustomNative', 'native', 'cpm', 1, '', '', ' 1080 × 1920 '],
+        ['DefaultNative', 'native', 'cpm', 1, '', ''],
+        ['InitialSplash', 'splash', 'cpm', 1, '', '', '']
+    ], { appName: 'App', typeConfig });
+
+    assert.deepEqual(rows.map((row) => [row.status, row.width, row.height]), [
+        ['ready', 728, 90],
+        ['ready', 640, 100],
+        ['ready', 1080, 1920],
+        ['ready', 1080, 1920],
+        ['ready', 1200, 628],
+        ['ready', 9, 16]
+    ]);
+    core.resolveTypeIds(rows, TYPE_LIST);
+    for (const row of rows) {
+        const payload = core.buildPlacementPayload(row, { publisherId: 'publisher-1', appId: 'app-1' });
+        assert.equal(payload.width, row.width);
+        assert.equal(payload.height, row.height);
+    }
+    assert.deepEqual(typeConfig.banner, { width: 728, height: 90 });
+    assert.deepEqual(core.TYPE_CONFIG.banner, { width: 320, height: 50 });
+});
+
+test('keeps six-column templates compatible with configured default sizes', () => {
+    const matrix = validMatrix();
+    matrix[0] = ['名称', '广告类型', '结算模式', '固定价格', '最低价格', '最高价格'];
+    const rows = core.normalizeRows(matrix, {
+        appName: 'App',
+        typeConfig: { banner: { width: 728, height: 90 } }
+    });
+    assert.equal(rows[0].width, 728);
+    assert.equal(rows[0].height, 90);
+    assert.ok(rows.every((row) => row.status === 'ready'));
+    assert.doesNotThrow(() => core.validateHeaders(matrix[0].concat('', '')));
+    assert.doesNotThrow(() => core.validateHeaders(core.HEADERS.concat('', '')));
+});
+
+test('marks nonblank invalid Excel sizes as invalid without falling back to defaults', () => {
+    const rows = core.normalizeRows([
+        core.HEADERS,
+        ...['0x50', '320x', '320x-50', '1.5x50', 'auto'].map((size, index) => (
+            [`Invalid${index}`, 'banner', 'cpm', 1, '', '', size]
+        ))
+    ], { appName: 'App' });
+    for (const row of rows) {
+        assert.equal(row.status, 'invalid');
+        assert.match(row.reason, /尺寸格式/);
+        assert.equal(row.width, undefined);
+        assert.equal(row.height, undefined);
+    }
+});
+
+test('persists all type sizes locally and reloads them for later imports', () => {
+    const storage = new Map();
+    const win = { localStorage: {
+        getItem: (key) => storage.get(key) || null,
+        setItem: (key, value) => storage.set(key, value)
+    } };
+    assert.deepEqual(core.readTypeConfig(win), core.TYPE_CONFIG);
+    const config = core.normalizeTypeConfig(null);
+    config.banner = { width: '728', height: '90' };
+    config.native = { width: 1200, height: 628 };
+    const saved = core.saveTypeConfig(win, config);
+    assert.deepEqual(saved.banner, { width: 728, height: 90 });
+    assert.deepEqual(JSON.parse(storage.get(core.TYPE_CONFIG_KEY)), saved);
+    const reloaded = core.readTypeConfig(win);
+    assert.deepEqual(reloaded, saved);
+    const row = core.normalizeRows(validMatrix(), { appName: 'App', typeConfig: reloaded })[0];
+    assert.equal(row.width, 728);
+    assert.equal(row.height, 90);
+
+    const previous = storage.get(core.TYPE_CONFIG_KEY);
+    config.native.width = 0;
+    assert.throws(() => core.saveTypeConfig(win, config), /native.*正整数/);
+    assert.equal(storage.get(core.TYPE_CONFIG_KEY), previous);
+    core.saveTypeConfig(win, core.TYPE_CONFIG);
+    assert.deepEqual(core.readTypeConfig(win), core.TYPE_CONFIG);
+});
+
+test('recovers from missing, corrupted and inaccessible local size settings', () => {
+    for (const raw of [null, 'invalid JSON', 'null', '[]', '42', '{}']) {
+        assert.deepEqual(core.readTypeConfig({ localStorage: { getItem: () => raw } }), core.TYPE_CONFIG);
+    }
+    const config = core.readTypeConfig({ localStorage: { getItem: () => JSON.stringify({
+        banner: { width: 728, height: 90 },
+        native: { width: 0, height: 628 },
+        splash: { width: 'bad', height: 16 },
+        unknown: { width: 1, height: 1 }
+    }) } });
+    assert.deepEqual(config, { ...core.TYPE_CONFIG, banner: { width: 728, height: 90 } });
+    const denied = {};
+    Object.defineProperty(denied, 'localStorage', { get() { throw new Error('Access denied'); } });
+    assert.deepEqual(core.readTypeConfig(denied), core.TYPE_CONFIG);
+    assert.throws(() => core.saveTypeConfig(denied, core.TYPE_CONFIG), /Access denied/);
 });
 
 test('rejects reward and requires incentivized', () => {
@@ -262,6 +380,9 @@ test('validates the fixed header order and rejects extra columns', () => {
 
     assert.throws(() => core.normalizeRows([
         core.HEADERS.concat('备注')
+    ]), /第一行必须严格/);
+    assert.throws(() => core.normalizeRows([
+        core.HEADERS.slice(0, -1).concat('备注')
     ]), /第一行必须严格/);
 });
 

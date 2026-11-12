@@ -8,7 +8,7 @@
 })(function createPlacementBulkUpload() {
     'use strict';
 
-    const HEADERS = ['名称', '广告类型', '结算模式', '固定价格', '最低价格', '最高价格'];
+    const HEADERS = ['名称', '广告类型', '结算模式', '固定价格', '最低价格', '最高价格', '尺寸'];
     const TYPE_CONFIG = Object.freeze({
         banner: Object.freeze({ width: 320, height: 50 }),
         interstitial: Object.freeze({ width: 9, height: 16 }),
@@ -16,6 +16,7 @@
         native: Object.freeze({ width: 9, height: 16 }),
         splash: Object.freeze({ width: 9, height: 16 })
     });
+    const TYPE_CONFIG_KEY = 'apicmob-placement-bulk-upload-type-sizes';
     const UNIT = Object.freeze({ cpm: 2, bidding: 4 });
     const STATUS_LABELS = Object.freeze({
         invalid: '校验失败',
@@ -34,6 +35,49 @@
 
     function isBlank(value) {
         return cleanText(value) === '';
+    }
+
+    function parseSize(value) {
+        const match = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(cleanText(value));
+        if (!match) {
+            return null;
+        }
+        const width = Number(match[1]);
+        const height = Number(match[2]);
+        return Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0
+            ? { width, height }
+            : null;
+    }
+
+    function normalizeTypeConfig(value) {
+        const config = {};
+        Object.keys(TYPE_CONFIG).forEach((type) => {
+            const size = value && value[type];
+            config[type] = (size && parseSize(`${size.width}x${size.height}`)) || { ...TYPE_CONFIG[type] };
+        });
+        return config;
+    }
+
+    function readTypeConfig(win) {
+        try {
+            return normalizeTypeConfig(JSON.parse(win.localStorage.getItem(TYPE_CONFIG_KEY)));
+        } catch (error) {
+            return normalizeTypeConfig(null);
+        }
+    }
+
+    function saveTypeConfig(win, value) {
+        const config = {};
+        Object.keys(TYPE_CONFIG).forEach((type) => {
+            const size = value && value[type];
+            const parsed = size && parseSize(`${size.width}x${size.height}`);
+            if (!parsed) {
+                throw new Error(`${type} 的宽和高必须是正整数`);
+            }
+            config[type] = parsed;
+        });
+        win.localStorage.setItem(TYPE_CONFIG_KEY, JSON.stringify(config));
+        return config;
     }
 
     function normalizeType(value) {
@@ -75,12 +119,14 @@
     }
 
     function validateHeaders(headerRow) {
-        const actual = (headerRow || []).slice(0, HEADERS.length).map(cleanText);
-        const hasExtra = (headerRow || []).slice(HEADERS.length).some((value) => !isBlank(value));
-        if (actual.length !== HEADERS.length
-            || actual.some((value, index) => value !== HEADERS[index])
-            || hasExtra) {
-            throw new Error(`Excel 第一行必须严格为：${HEADERS.join('、')}`);
+        const actual = (headerRow || []).map(cleanText);
+        while (actual.length && !actual[actual.length - 1]) {
+            actual.pop();
+        }
+        const expected = actual.length === HEADERS.length - 1 ? HEADERS.slice(0, -1) : HEADERS;
+        if (actual.length !== expected.length
+            || actual.some((value, index) => value !== expected[index])) {
+            throw new Error(`Excel 第一行必须严格为：${HEADERS.join('、')}（兼容不含尺寸列的旧模板）`);
         }
     }
 
@@ -90,6 +136,8 @@
             throw new Error('Excel 中没有可读取的数据。');
         }
         validateHeaders(matrix[0]);
+        const typeConfig = normalizeTypeConfig(opts.typeConfig);
+        const hasSizeColumn = cleanText(matrix[0][HEADERS.length - 1]) === '尺寸';
 
         const rows = [];
         matrix.slice(1).forEach((cells, index) => {
@@ -144,7 +192,11 @@
                 }
             }
 
-            const size = TYPE_CONFIG[row.type];
+            const rawSize = hasSizeColumn ? values[6] : '';
+            const size = isBlank(rawSize) ? typeConfig[row.type] : parseSize(rawSize);
+            if (!isBlank(rawSize) && !size) {
+                row.errors.push('尺寸格式必须为 宽x高（例如 320x50），宽高必须是正整数');
+            }
             if (size) {
                 row.width = size.width;
                 row.height = size.height;
@@ -743,6 +795,14 @@
                 .apu-naming-options { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 10px; }
                 .apu-field .apu-checkbox { display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer; }
                 .apu-checkbox input { margin: 0; flex: none; accent-color: #1677ff; }
+                .apu-size-settings { margin-top: 16px; padding: 12px 0; border-top: 1px solid #ebeef5; border-bottom: 1px solid #ebeef5; }
+                .apu-size-settings summary { color: #606266; font-weight: 600; cursor: pointer; }
+                .apu-size-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; margin: 14px 0; }
+                .apu-size-pair { display: grid; grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr); align-items: center; gap: 6px; }
+                .apu-size-pair .apu-input { min-width: 0; }
+                .apu-size-pair > span { text-align: center; color: #909399; }
+                .apu-size-status { color: #606266; overflow-wrap: anywhere; }
+                .apu-size-status[data-error="true"] { color: #f56c6c; }
                 .apu-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
                 .apu-file-name { color: #606266; overflow-wrap: anywhere; }
                 .apu-tip, .apu-error, .apu-summary {
@@ -760,7 +820,7 @@
                 .apu-table .apu-col-name { width: 260px; overflow-wrap: anywhere; }
                 .apu-table .apu-col-type { width: 120px; }
                 .apu-table .apu-col-mode { width: 190px; }
-                .apu-table .apu-col-size { width: 85px; }
+                .apu-table .apu-col-size { width: 125px; overflow-wrap: anywhere; }
                 .apu-status { font-weight: 600; }
                 .apu-status-ready, .apu-status-running { color: #409eff; }
                 .apu-status-success { color: #25a46f; }
@@ -827,17 +887,18 @@
             }
             const rows = [
                 HEADERS,
-                ['HomeBanner', 'banner', 'cpm', 2.5, '', ''],
-                ['Interstitial', 'interstitial', 'bidding', '', 1, 8],
-                ['RewardVideo', 'incentivized', 'bidding', '', 2, 10],
-                ['NativeFeed', 'native', 'cpm', 1.5, '', ''],
-                ['OpenScreen', 'splash', 'bidding', '', 1, 8]
+                ['HomeBanner', 'banner', 'cpm', 2.5, '', '', ''],
+                ['Interstitial', 'interstitial', 'bidding', '', 1, 8, ''],
+                ['RewardVideo', 'incentivized', 'bidding', '', 2, 10, ''],
+                ['NativeFeed', 'native', 'cpm', 1.5, '', '', ''],
+                ['OpenScreen', 'splash', 'bidding', '', 1, 8, '']
             ];
             const sheet = win.XLSX.utils.aoa_to_sheet(rows);
             sheet['!cols'] = [
                 { wch: 22 }, { wch: 18 }, { wch: 16 },
-                { wch: 16 }, { wch: 16 }, { wch: 16 }
+                { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 }
             ];
+            sheet.G1.c = [{ a: 'CMS 扩展', t: '可选。填写宽x高，例如 320x50 或 1080×1920；留空时使用当前广告类型的默认尺寸。宽高必须是正整数。' }];
             const book = win.XLSX.utils.book_new();
             win.XLSX.utils.book_append_sheet(book, sheet, '广告位');
             win.XLSX.writeFile(book, 'SDK广告位批量上传模板.xlsx');
@@ -907,7 +968,7 @@
                                 <td class="apu-col-name">${esc(row.name || row.sourceName || '-')}</td>
                                 <td>${esc(row.type || '-')}</td>
                                 <td>${row.mode ? esc(priceText(row)) : '-'}</td>
-                                <td>${row.width ? `${row.width}×${row.height}` : '-'}</td>
+                                <td class="apu-col-size">${row.width ? `${row.width}×${row.height}` : '-'}</td>
                                 <td>
                                     <div class="apu-status apu-status-${esc(row.status)}">${esc(STATUS_LABELS[row.status] || row.status)}</div>
                                     ${(row.phase || row.reason) ? `<div class="apu-reason">${esc(row.phase || row.reason)}</div>` : ''}
@@ -947,7 +1008,8 @@
                 rows: [],
                 existing: null,
                 fileName: '',
-                parsing: false
+                parsing: false,
+                typeConfig: readTypeConfig(win)
             };
 
             ui.body.innerHTML = `
@@ -965,6 +1027,25 @@
                         </div>
                     </div>
                 </div>
+                <details class="apu-size-settings">
+                    <summary>默认尺寸（宽 × 高）</summary>
+                    <div class="apu-size-grid">
+                        ${Object.keys(TYPE_CONFIG).map((type) => `
+                            <div class="apu-field">
+                                <label>${esc(type)}</label>
+                                <div class="apu-size-pair">
+                                    <input class="apu-input" type="number" min="1" step="1" required aria-label="${esc(type)} 默认宽度" data-size-type="${esc(type)}" data-dimension="width" value="${state.typeConfig[type].width}">
+                                    <span aria-hidden="true">×</span>
+                                    <input class="apu-input" type="number" min="1" step="1" required aria-label="${esc(type)} 默认高度" data-size-type="${esc(type)}" data-dimension="height" value="${state.typeConfig[type].height}">
+                                </div>
+                            </div>`).join('')}
+                    </div>
+                    <div class="apu-actions">
+                        <button type="button" class="el-button el-button--primary" data-role="save-sizes"><i class="el-icon-check" aria-hidden="true"></i><span>保存默认尺寸</span></button>
+                        <button type="button" class="el-button el-button--default" data-role="reset-sizes"><i class="el-icon-refresh-left" aria-hidden="true"></i><span>恢复初始尺寸</span></button>
+                        <span class="apu-size-status" data-role="size-status" role="status" aria-live="polite"></span>
+                    </div>
+                </details>
                 <div class="apu-field" style="margin-top:14px">
                     <label>Excel 文件</label>
                     <div class="apu-actions">
@@ -975,7 +1056,7 @@
                     </div>
                 </div>
                 <div class="apu-tip">
-                    支持 banner、interstitial、incentivized、native、splash。每行创建一个广告位；确认前只做读取和校验，不会修改 CMS。
+                    支持 banner、interstitial、incentivized、native、splash。尺寸可填 320x50，留空使用默认尺寸。每行创建一个广告位；确认前只做读取和校验，不会修改 CMS。
                 </div>
                 <div data-role="message"></div>
                 <div data-role="preview"></div>`;
@@ -995,6 +1076,10 @@
             const fileName = ui.body.querySelector('[data-role="file-name"]');
             const message = ui.body.querySelector('[data-role="message"]');
             const preview = ui.body.querySelector('[data-role="preview"]');
+            const sizeInputs = Array.from(ui.body.querySelectorAll('[data-size-type]'));
+            const saveSizesButton = ui.body.querySelector('[data-role="save-sizes"]');
+            const resetSizesButton = ui.body.querySelector('[data-role="reset-sizes"]');
+            const sizeStatus = ui.body.querySelector('[data-role="size-status"]');
             const chooseButton = ui.body.querySelector('[data-role="choose"]');
             const templateButton = ui.body.querySelector('[data-role="template"]');
             const closeButton = elementButton('关闭', 'el-button--default', () => closeModal(false));
@@ -1010,9 +1095,55 @@
 
             function refreshExecuteButton() {
                 const count = state.rows.filter((row) => row.status === 'ready').length;
-                executeButton.disabled = running || state.parsing || count === 0;
+                const sizesDirty = sizeInputs.some((input) => (
+                    input.value !== String(state.typeConfig[input.dataset.sizeType][input.dataset.dimension])
+                ));
+                executeButton.disabled = running || state.parsing || sizesDirty || count === 0;
                 executeButton.querySelector('span').textContent = count ? `确认创建 ${count} 条` : '确认创建';
+                sizeInputs.forEach((input) => { input.disabled = running || state.parsing || preserveResult; });
+                saveSizesButton.disabled = running || state.parsing || preserveResult || !sizesDirty;
+                resetSizesButton.disabled = running || state.parsing || preserveResult;
             }
+
+            function setSizeStatus(text, isError) {
+                sizeStatus.textContent = text;
+                sizeStatus.dataset.error = String(Boolean(isError));
+            }
+
+            function persistSizes(config) {
+                if (running || state.parsing || preserveResult) {
+                    return;
+                }
+                try {
+                    state.typeConfig = saveTypeConfig(win, config);
+                    sizeInputs.forEach((input) => {
+                        input.value = state.typeConfig[input.dataset.sizeType][input.dataset.dimension];
+                    });
+                    setSizeStatus('默认尺寸已保存到本地', false);
+                    rebuildPreview(false);
+                } catch (error) {
+                    setSizeStatus(`保存失败：${error.message}`, true);
+                }
+                refreshExecuteButton();
+            }
+
+            sizeInputs.forEach((input) => input.addEventListener('input', () => {
+                setSizeStatus('默认尺寸有未保存的修改', false);
+                refreshExecuteButton();
+            }));
+            saveSizesButton.addEventListener('click', () => {
+                const config = {};
+                sizeInputs.forEach((input) => {
+                    const type = input.dataset.sizeType;
+                    if (!config[type]) {
+                        config[type] = {};
+                    }
+                    config[type][input.dataset.dimension] = input.value;
+                });
+                persistSizes(config);
+            });
+            resetSizesButton.addEventListener('click', () => persistSizes(TYPE_CONFIG));
+            refreshExecuteButton();
 
             async function rebuildPreview(reloadExisting) {
                 if (!state.matrix || state.parsing || running) {
@@ -1029,7 +1160,8 @@
                         prefix: prefixInput.value,
                         appName: context.app.name,
                         includePrefix: includePrefixInput.checked,
-                        includeType: includeTypeInput.checked
+                        includeType: includeTypeInput.checked,
+                        typeConfig: state.typeConfig
                     });
                     resolveTypeIds(rows, context.typeList);
                     classifyRows(rows, state.existing, {
@@ -1093,7 +1225,7 @@
             });
 
             async function executeReadyRows() {
-                if (running || state.parsing || !state.matrix || !featureEnabled()) {
+                if (executeButton.disabled || running || state.parsing || !state.matrix || !featureEnabled()) {
                     return;
                 }
                 running = true;
@@ -1113,7 +1245,8 @@
                         prefix: prefixInput.value,
                         appName: context.app.name,
                         includePrefix: includePrefixInput.checked,
-                        includeType: includeTypeInput.checked
+                        includeType: includeTypeInput.checked,
+                        typeConfig: state.typeConfig
                     });
                     resolveTypeIds(freshRows, context.typeList);
                     classifyRows(freshRows, state.existing, { appId: context.app.id });
@@ -1308,8 +1441,13 @@
     return {
         HEADERS,
         TYPE_CONFIG,
+        TYPE_CONFIG_KEY,
         UNIT,
         cleanText,
+        parseSize,
+        normalizeTypeConfig,
+        readTypeConfig,
+        saveTypeConfig,
         normalizeType,
         normalizeMode,
         parseNonNegativeNumber,

@@ -22,14 +22,15 @@ const factories = [
     factoryOf('src/features/ssp-placement-bulk-upload.js', 'createPlacementBulkUpload'),
     factoryOf('src/features/sdk-config-overview-layout.js', 'createSdkConfigOverviewLayout'),
     factoryOf('src/features/sdk-resource-replace.js', 'createSdkResourceReplace'),
+    factoryOf('src/features/sdk-resource-usage.js', 'createSdkResourceUsage'),
     factoryOf('src/features/sdk-integration.js', 'createSdkIntegration')
 ];
 
 const output = `// ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.13
-// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、辅料替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
+// @version      1.2.14
+// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -50,7 +51,11 @@ ${factories.join('\n\n')}
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
         placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),
         sdkOverviewLayout: (runtime) => createSdkConfigOverviewLayout().boot(window, runtime),
-        sdkResourceReplace: (runtime) => createSdkResourceReplace().boot(window, runtime),
+        sdkResourceReplace: (runtime) => {
+            const core = createSdkResourceReplace();
+            core.boot(window, runtime);
+            createSdkResourceUsage().boot(window, runtime, core);
+        },
         integrationControl: (runtime) => createSdkIntegration().bootOverview(window, runtime),
         integrationNaming: (runtime) => createSdkIntegration().bootNaming(window, runtime)
     });

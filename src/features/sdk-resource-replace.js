@@ -162,7 +162,7 @@
                 const current = await bindings();
                 const old = current.some((row) => id(row.id) === id(source.id));
                 const target = current.find((row) => id(row.resource_id) === id(selected.id));
-                summary = `旧绑定${old ? '仍在' : '已不在'}，目标${target ? `已绑定（权重 ${target.weight}）` : '未绑定'}`;
+                summary = `旧绑定${old ? '仍在' : '已不在'}，目标${target ? `已绑定（ID ${id(target.id)}，权重 ${target.weight}）` : '未绑定'}`;
             } catch { /* The write outcome is unknown until the page can be read. */ }
             const failure = new Error(`替换未完整验证：${error.message}。${summary}。请刷新核对后再处理，未自动重试。`);
             failure.writeStarted = Boolean(stage);
@@ -334,13 +334,16 @@
             };
             try {
                 request ||= createRequest(win);
-                if (!id(source.resource_id)) {
+                if (!id(source.resource_id) || !Object.hasOwn(source, 'resource_remark')) {
                     const rows = await allRows(request, '/sdk/config/' + channel.key + '/index', { config_id: configId });
                     const fresh = rows.find((item) => id(item.id) === id(source.id) && id(item.config_id) === configId);
-                    if (!id(fresh?.resource_id) || !sameBindings([fresh], [{ ...source, resource_id: fresh.resource_id }])) {
+                    const resolved = { ...source, resource_id: id(source.resource_id) || fresh?.resource_id,
+                        resource_remark: Object.hasOwn(source, 'resource_remark') ? source.resource_remark : fresh?.resource_remark };
+                    if (!id(fresh?.resource_id) || !sameBindings([fresh], [resolved])) {
                         throw new Error('无法核对当前辅料，请刷新列表。');
                     }
                     source.resource_id = fresh.resource_id;
+                    source.resource_remark = fresh.resource_remark;
                 }
                 const candidates = matchingResources(await allRows(request, DIRECTORY), source);
                 if (!canSubmit()) return;

@@ -1,6 +1,6 @@
 {
   "name": "apicmob-cms-extend",
-  "version": "1.2.13",
+  "version": "1.2.14",
   "private": true,
   "scripts": {
     "build": "node scripts/build.js",

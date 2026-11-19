@@ -17,6 +17,7 @@ function factoryOf(filename, name) {
 
 const factories = [
     factoryOf('src/cms-extensions.js', 'createCmsExtensions'),
+    factoryOf('src/features/session-guard.js', 'createSessionGuard'),
     factoryOf('src/features/dynamic-report-back-button.js', 'createDynamicReportBackButton'),
     factoryOf('src/features/module-apply-template.js', 'createModuleApplyTemplate'),
     factoryOf('src/features/ssp-placement-bulk-upload.js', 'createPlacementBulkUpload'),
@@ -29,8 +30,8 @@ const factories = [
 const output = `// ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.14
-// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
+// @version      1.2.15
+// @description  整合登录态临时保护、动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -47,6 +48,7 @@ const output = `// ==UserScript==
 ${factories.join('\n\n')}
 
     createCmsExtensions().boot(window, {
+        sessionGuard: (runtime) => createSessionGuard().boot(window, runtime),
         reportBack: (runtime) => createDynamicReportBackButton().boot(window, runtime),
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
         placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),

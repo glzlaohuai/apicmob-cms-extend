@@ -11,10 +11,11 @@
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.14';
+    const VERSION = '1.2.15';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
+        Object.freeze({ id: 'sessionGuard', name: '登录态临时保护', location: '全站 / 自动退出前复核登录状态', icon: 'shield-check' }),
         Object.freeze({ id: 'reportBack', name: '动态报表返回按钮', location: '数据统计 / 动态报表详情', icon: 'arrow-left' }),
         Object.freeze({ id: 'moduleTemplate', name: '模组配置套用模板', location: '系统管理 / 模组配置编辑', icon: 'layers' }),
         Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
@@ -30,6 +31,7 @@
         layers: '<path d="m12.83 2.18 8.6 4.3a.58.58 0 0 1 0 1.04l-8.6 4.3a1.86 1.86 0 0 1-1.66 0l-8.6-4.3a.58.58 0 0 1 0-1.04l8.6-4.3a1.86 1.86 0 0 1 1.66 0"/><path d="m22 12-9.17 4.59a1.86 1.86 0 0 1-1.66 0L2 12"/><path d="m22 17-9.17 4.59a1.86 1.86 0 0 1-1.66 0L2 17"/>',
         upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
         settings: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+        'shield-check': '<path d="M20 13c0 5-8 9-8 9s-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
         check: '<path d="m20 6-11 11-5-5"/>'
     };
 
@@ -99,6 +101,7 @@
                 .feature:nth-of-type(4) .feature-icon { background: #edf4f5; color: #397b83; }
                 .feature:nth-of-type(5) .feature-icon { background: #f1eef8; color: #7961a5; }
                 .feature:nth-of-type(6) .feature-icon { background: #edf2fa; color: #4a6eaa; }
+                .feature:nth-of-type(7) .feature-icon { background: #eef3ed; color: #537c48; }
                 .feature-name { display: block; margin-bottom: 6px; font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
                 .feature-location { display: block; color: #7c8590; font-size: 12px; overflow-wrap: anywhere; }
                 .switch-group { display: flex; align-items: center; gap: 12px; }

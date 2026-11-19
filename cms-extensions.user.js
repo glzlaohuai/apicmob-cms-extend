@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.14
-// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
+// @version      1.2.15
+// @description  整合登录态临时保护、动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,10 +20,11 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.14';
+    const VERSION = '1.2.15';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
+        Object.freeze({ id: 'sessionGuard', name: '登录态临时保护', location: '全站 / 自动退出前复核登录状态', icon: 'shield-check' }),
         Object.freeze({ id: 'reportBack', name: '动态报表返回按钮', location: '数据统计 / 动态报表详情', icon: 'arrow-left' }),
         Object.freeze({ id: 'moduleTemplate', name: '模组配置套用模板', location: '系统管理 / 模组配置编辑', icon: 'layers' }),
         Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
@@ -39,6 +40,7 @@ function createCmsExtensions() {
         layers: '<path d="m12.83 2.18 8.6 4.3a.58.58 0 0 1 0 1.04l-8.6 4.3a1.86 1.86 0 0 1-1.66 0l-8.6-4.3a.58.58 0 0 1 0-1.04l8.6-4.3a1.86 1.86 0 0 1 1.66 0"/><path d="m22 12-9.17 4.59a1.86 1.86 0 0 1-1.66 0L2 12"/><path d="m22 17-9.17 4.59a1.86 1.86 0 0 1-1.66 0L2 17"/>',
         upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
         settings: '<path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/>',
+        'shield-check': '<path d="M20 13c0 5-8 9-8 9s-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
         check: '<path d="m20 6-11 11-5-5"/>'
     };
 
@@ -108,6 +110,7 @@ function createCmsExtensions() {
                 .feature:nth-of-type(4) .feature-icon { background: #edf4f5; color: #397b83; }
                 .feature:nth-of-type(5) .feature-icon { background: #f1eef8; color: #7961a5; }
                 .feature:nth-of-type(6) .feature-icon { background: #edf2fa; color: #4a6eaa; }
+                .feature:nth-of-type(7) .feature-icon { background: #eef3ed; color: #537c48; }
                 .feature-name { display: block; margin-bottom: 6px; font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
                 .feature-location { display: block; color: #7c8590; font-size: 12px; overflow-wrap: anywhere; }
                 .switch-group { display: flex; align-items: center; gap: 12px; }
@@ -294,6 +297,131 @@ function createCmsExtensions() {
     }
 
     return { STORAGE_KEY, VERSION, SETTINGS_PARAM, FEATURES, normalizeSettings, readSettings, saveSettings, settingsUrl, isSettingsPage, mountSettings, hasPendingMigration, boot };
+}
+
+function createSessionGuard() {
+    'use strict';
+
+    const LOGOUT = 'd2admin/account/logout';
+    const CHECK_URL = 'https://cmsapi.apicmob.com/api/cms2/user/menu';
+    const installed = new WeakSet();
+
+    function readCookie(win, name) {
+        const entry = win.document.cookie.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+        if (!entry) return '';
+        try { return decodeURIComponent(entry.slice(name.length + 1)); }
+        catch (error) { return ''; }
+    }
+
+    function boot(win, runtime) {
+        const enabled = runtime.isEnabled;
+        let observedVersion = '';
+        const prototype = win.XMLHttpRequest && win.XMLHttpRequest.prototype;
+        if (prototype && typeof prototype.setRequestHeader === 'function') {
+            const original = prototype.setRequestHeader;
+            prototype.setRequestHeader = function (name, value) {
+                if (String(name).toLowerCase() === 'x-token' && value) observedVersion = String(value);
+                return original.apply(this, arguments);
+            };
+        }
+
+        async function probe(version) {
+            const controller = new win.AbortController();
+            let timer;
+            const timeout = new Promise((resolve) => {
+                timer = win.setTimeout(() => { controller.abort(); resolve('unknown'); }, 5000);
+            });
+            const request = async () => {
+                try {
+                    const response = await win.fetch(CHECK_URL, {
+                        method: 'GET', credentials: 'include', cache: 'no-store', signal: controller.signal,
+                        headers: { accept: 'application/json, text/plain, */*', 'x-token': version }
+                    });
+                    if (response.status === 401) return 'rejected';
+                    if (!response.ok) return 'unknown';
+                    const body = await response.json();
+                    if (body && body.code === 401) return 'rejected';
+                    return body && (body.code === 200 || body.code === 0) ? 'valid' : 'unknown';
+                } catch (error) {
+                    return 'unknown';
+                }
+            };
+            try { return await Promise.race([request(), timeout]); }
+            finally { win.clearTimeout(timer); }
+        }
+
+        function attach() {
+            if (!enabled()) return;
+            const root = win.document.getElementById('app');
+            const vm = root && (root.__vue__ || [...root.querySelectorAll('*')].map((node) => node.__vue__).find((value) => value && value.$store));
+            const store = vm && vm.$store;
+            if (!store || typeof store.dispatch !== 'function' || installed.has(store)) return;
+            installed.add(store);
+
+            const original = store.dispatch;
+            let pending = null;
+            let generation = 0;
+            let lastNotice = 0;
+
+            function notice(status) {
+                if (Date.now() - lastNotice < 10000) return;
+                lastNotice = Date.now();
+                const message = status === 'valid'
+                    ? '登录状态复核通过，已保留当前页面。刚才失败的操作请核对结果后重试。'
+                    : '暂时无法确认登录状态，已保留当前页面。请稍后重试；持续失败可手动退出后登录。';
+                try {
+                    if (typeof vm.$message === 'function') vm.$message({ message, type: 'warning', duration: 7000 });
+                    else win.console.warn('[CMS 登录态保护]', message);
+                } catch (error) { /* A notification must never turn a preserved session into a failed dispatch. */ }
+            }
+
+            store.dispatch = function (action, payload) {
+                const type = action && typeof action === 'object' ? action.type : action;
+                const data = action && typeof action === 'object' ? action : payload;
+                if (type !== LOGOUT) return original.apply(this, arguments);
+                if (data && data.confirm) {
+                    generation++;
+                    return original.apply(this, arguments);
+                }
+                const identity = readCookie(win, 'appic_6.x_cms_token');
+                if (!enabled() || !identity || identity === 'undefined' || identity === 'null'
+                    || /^#\/login(?:[/?]|$)/.test(win.location.hash)) {
+                    generation++;
+                    return original.apply(this, arguments);
+                }
+                if (pending) return pending;
+
+                const args = arguments;
+                const receiver = this;
+                const currentGeneration = generation;
+                const current = () => generation === currentGeneration
+                    && identity === readCookie(win, 'appic_6.x_cms_token');
+                const version = observedVersion || readCookie(win, 'appic_cms_main_version');
+                const check = async () => {
+                    // Use native fetch so a failed verification cannot schedule another CMS logout.
+                    let status = version ? await probe(version) : 'unknown';
+                    if (!current()) return;
+                    if (!enabled()) return original.apply(receiver, args);
+                    if (status === 'rejected') {
+                        await new Promise((resolve) => win.setTimeout(resolve, 500));
+                        if (!current()) return;
+                        if (!enabled()) return original.apply(receiver, args);
+                        status = await probe(version);
+                        if (!current()) return;
+                        if (!enabled() || status === 'rejected') return original.apply(receiver, args);
+                    }
+                    notice(status);
+                };
+                pending = check().finally(() => { pending = null; });
+                return pending;
+            };
+        }
+
+        runtime.watch(attach);
+        attach();
+    }
+
+    return { boot };
 }
 
 function createDynamicReportBackButton() {
@@ -4677,6 +4805,7 @@ function createSdkIntegration() {
 }
 
     createCmsExtensions().boot(window, {
+        sessionGuard: (runtime) => createSessionGuard().boot(window, runtime),
         reportBack: (runtime) => createDynamicReportBackButton().boot(window, runtime),
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
         placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),

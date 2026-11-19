@@ -10,7 +10,6 @@
         { key: 'resource2', pane: 'pane-BuildResources2', label: '辅料2' }
     ];
     const DIRECTORY = '/sdk/resource/index';
-    const COLUMN = '__apicmob_resource_replace';
     const id = (value) => String(value ?? '');
     const validWeight = (value) => Number.isInteger(value) && value >= 0 && value <= 100;
 
@@ -177,10 +176,13 @@
         function visit(table) {
             if (!table || seen.has(table) || !pane.contains(table.$el)) return null;
             seen.add(table);
-            if (table.getTableColumn?.().fullColumn.some((column) => column.property === 'resource_resource')) {
+            const columns = table.getTableColumn?.().fullColumn;
+            const actions = columns?.find((column) => !column.property
+                && typeof column.slots?.default === 'function' && column.slots.header && column.slots.edit);
+            if (actions && columns.some((column) => column.property === 'resource_resource')) {
                 for (let vm = table.$parent; vm; vm = vm.$parent) {
                     if (vm.isActive && id(vm.detailsParams?.id) === configId && typeof vm.GetTableDatas === 'function') {
-                        return { table, vm, channel };
+                        return { table, vm, channel, actions };
                     }
                 }
             }
@@ -271,6 +273,14 @@
             };
             try {
                 request ||= createRequest(win);
+                if (!id(source.resource_id)) {
+                    const rows = await allRows(request, '/sdk/config/' + channel.key + '/index', { config_id: configId });
+                    const fresh = rows.find((item) => id(item.id) === id(source.id) && id(item.config_id) === configId);
+                    if (!id(fresh?.resource_id) || !sameBindings([fresh], [{ ...source, resource_id: fresh.resource_id }])) {
+                        throw new Error('无法核对当前辅料，请刷新列表。');
+                    }
+                    source.resource_id = fresh.resource_id;
+                }
                 const candidates = matchingResources(await allRows(request, DIRECTORY), source);
                 if (!canSubmit()) return;
                 let selectable = false;
@@ -304,31 +314,34 @@
                     if (found) break;
                 }
             }
-            if (attached && (attached.table !== found?.table || attached.configId !== configId)) {
-                const { table } = attached;
+            if (attached && (attached.actions !== found?.actions || attached.configId !== configId
+                || attached.actions.slots.default !== attached.render)) {
+                const { table, actions, original, render, width } = attached;
                 attached = null;
-                if (!table._isDestroyed) {
-                    const columns = table.getTableColumn().collectColumn;
-                    table.loadColumn(columns.filter((column) => column.property !== COLUMN));
-                }
+                if (actions.slots.default === render) actions.slots.default = original;
+                actions.width = width;
+                if (!table._isDestroyed && table !== found?.table) table.refreshColumn();
                 if (dialog?.open && !busy) dialog.close();
             }
             if (!found || attached) return;
-            const { table, vm, channel } = found;
-            const columns = table.getTableColumn().collectColumn;
-            attached = { table, configId };
-            const next = columns.slice();
-            const keyIndex = next.findIndex((column) => column.property === 'resource_resource');
-            next.splice(keyIndex + 1, 0, {
-                field: COLUMN, title: '替换' + channel.label, width: 95,
-                slots: { default: ({ row }, h) => row.status === 'active' && row.resource_id
-                    ? [h('button', {
-                        class: 'el-button el-button--text el-button--small',
-                        attrs: { type: 'button', title: '替换' + channel.label },
-                        on: { click: (event) => { event.stopPropagation(); open(vm, channel, configId, row); } }
-                    }, ['替换'])] : [] }
-            });
-            Promise.resolve(table.loadColumn(next)).catch((error) => win.console.error('[辅料替换]', error));
+            const { table, vm, channel, actions } = found;
+            const { default: original } = actions.slots;
+            const { width } = actions;
+            const label = '替换' + channel.label;
+            function render(params, h) {
+                const { row } = params;
+                const enabled = row.status === 'active' && id(row.id) && row.resource_resource;
+                return [].concat(original.call(this, params, h) || [], h('button', {
+                    class: 'el-button el-button--text',
+                    style: { marginLeft: '8px', width: '28px', padding: '0', fontSize: '18px' },
+                    attrs: { type: 'button', 'aria-label': label, title: enabled ? label : '仅支持替换已启用的绑定', disabled: !enabled },
+                    on: { click: (event) => { event.stopPropagation(); open(vm, channel, configId, row); } }
+                }, [h('i', { class: 'el-icon-refresh', attrs: { 'aria-hidden': 'true' } })]));
+            }
+            attached = { table, actions, original, render, width, configId };
+            actions.width = (Number(width) || 120) + 36;
+            actions.slots.default = render;
+            Promise.resolve(table.refreshColumn()).catch((error) => win.console.error('[辅料替换]', error));
         }
         runtime.watch(sync);
     }

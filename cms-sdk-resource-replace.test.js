@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { routeId, allRows, matchingResources, replace } = require('./src/features/sdk-resource-replace');
+const { routeId, allRows, matchingResources, replace, boot } = require('./src/features/sdk-resource-replace');
 
 const configId = 'config-example';
 const old = { id: 'binding-old', config_id: configId, resource_id: 'def-old', resource_resource: 'banner',
@@ -11,6 +11,43 @@ const other = { ...old, id: 'binding-other', resource_id: 'def-other', resource_
 const target = { id: 'def-new', resource: 'banner', resource_ver: '01', status: 'active' };
 const definitions = [{ ...target, id: 'def-old', resource_ver: '' }, target];
 const result = (list, count = list.length) => ({ count, result: { list } });
+
+test('both panes add a button to the native action cell without inserting a table column', () => {
+    const nativeActions = () => ['edit', 'delete'];
+    const panes = Object.fromEntries(['pane-BuildResources', 'pane-BuildResources2'].map((id) => {
+        const cell = { width: '120', slots: { default: nativeActions, header() {}, edit() {} } };
+        const columns = [cell, { property: 'resource_resource' }];
+        const table = {
+            $el: {},
+            $parent: { isActive: true, detailsParams: { id: configId }, GetTableDatas() {} },
+            getTableColumn: () => ({ fullColumn: columns, collectColumn: columns }),
+            refreshColumn() {},
+            loadColumn() { assert.fail('the existing table columns must not be replaced'); }
+        };
+        return [id, {
+            cell, table, getClientRects: () => [1], contains: (el) => el === table.$el,
+            querySelectorAll: () => [{ __vue__: table }]
+        }];
+    }));
+    let activePane = 'pane-BuildResources';
+    let sync;
+    const win = { document: { getElementById: (id) => id === activePane ? panes[id] : null },
+        location: { hash: `#/sdk/config/overview/detials?id=${configId}` }, console };
+    boot(win, { isEnabled: () => true, watch: (callback) => { sync = callback; } });
+    const h = (tag, props, children) => ({ tag, props, children });
+    for (const [id, pane] of Object.entries(panes)) {
+        activePane = id;
+        sync();
+        sync();
+        const actions = pane.cell.slots.default({ row: old }, h);
+        assert.deepEqual(actions.slice(0, 2), ['edit', 'delete']);
+        assert.equal(actions.length, 3);
+        assert.equal(actions[2].tag, 'button');
+        assert.equal(actions[2].props.attrs['aria-label'], id.endsWith('2') ? '替换辅料2' : '替换辅料');
+        assert.equal(typeof actions[2].props.on.click, 'function');
+    }
+    assert.equal(panes['pane-BuildResources'].cell.slots.default, nativeActions);
+});
 
 function fixture(options = {}) {
     const base = '/sdk/config/' + (options.channel || 'resource');

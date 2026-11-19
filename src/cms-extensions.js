@@ -11,7 +11,7 @@
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.9';
+    const VERSION = '1.2.11';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -20,7 +20,8 @@
         Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
         Object.freeze({ id: 'sdkOverviewLayout', name: 'SDK 配置总览布局', location: 'SDK / 配置管理 / 配置总览', icon: 'layers' }),
         Object.freeze({ id: 'integrationControl', name: '集成渠道控量展示', location: 'SDK / 集成 / 集成概览', icon: 'settings' }),
-        Object.freeze({ id: 'integrationNaming', name: '集成模组渠道命名', location: 'SDK / 集成 / 集成详情', icon: 'layers' })
+        Object.freeze({ id: 'integrationNaming', name: '集成模组渠道命名', location: 'SDK / 集成 / 集成详情', icon: 'layers' }),
+        Object.freeze({ id: 'sdkResourceReplace', name: 'SDK 辅料替换', location: 'SDK / 配置总览 / 配置详情 / 辅料与辅料2', icon: 'layers' })
     ]);
 
     // Lucide icons (ISC license); kept inline so the userscript works without a CDN.

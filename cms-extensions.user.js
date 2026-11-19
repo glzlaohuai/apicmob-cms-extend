@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.9
-// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、集成渠道控量和模组渠道命名，提供独立功能开关设置页
+// @version      1.2.11
+// @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、辅料替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.9';
+    const VERSION = '1.2.11';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -29,7 +29,8 @@ function createCmsExtensions() {
         Object.freeze({ id: 'placementBulk', name: 'SDK 广告位批量上传', location: 'SSP / 媒体详情 / SDK 广告位', icon: 'upload' }),
         Object.freeze({ id: 'sdkOverviewLayout', name: 'SDK 配置总览布局', location: 'SDK / 配置管理 / 配置总览', icon: 'layers' }),
         Object.freeze({ id: 'integrationControl', name: '集成渠道控量展示', location: 'SDK / 集成 / 集成概览', icon: 'settings' }),
-        Object.freeze({ id: 'integrationNaming', name: '集成模组渠道命名', location: 'SDK / 集成 / 集成详情', icon: 'layers' })
+        Object.freeze({ id: 'integrationNaming', name: '集成模组渠道命名', location: 'SDK / 集成 / 集成详情', icon: 'layers' }),
+        Object.freeze({ id: 'sdkResourceReplace', name: 'SDK 辅料替换', location: 'SDK / 配置总览 / 配置详情 / 辅料与辅料2', icon: 'layers' })
     ]);
 
     // Lucide icons (ISC license); kept inline so the userscript works without a CDN.
@@ -3439,6 +3440,340 @@ function createSdkConfigOverviewLayout() {
     return { boot };
 }
 
+function createSdkResourceReplace() {
+    'use strict';
+
+    const CHANNELS = [
+        { key: 'resource', pane: 'pane-BuildResources', label: '辅料' },
+        { key: 'resource2', pane: 'pane-BuildResources2', label: '辅料2' }
+    ];
+    const DIRECTORY = '/sdk/resource/index';
+    const COLUMN = '__apicmob_resource_replace';
+    const id = (value) => String(value ?? '');
+    const validWeight = (value) => Number.isInteger(value) && value >= 0 && value <= 100;
+
+    function routeId(location) {
+        const [path, query] = location.hash.split('?');
+        return path === '#/sdk/config/overview/detials' ? new URLSearchParams(query).get('id') : null;
+    }
+
+    async function allRows(request, path, params = {}) {
+        const rows = new Map();
+        let total;
+        for (let page = 1; page <= 1000; page++) {
+            const response = await request(path, { params: { ...params, page, size: 100 } });
+            const list = response.result?.list;
+            const count = response.count;
+            if (!Array.isArray(list) || !Number.isSafeInteger(count) || count < 0
+                || (page > 1 && count !== total)) throw new Error('列表数量发生变化或格式异常，请重新读取。');
+            total = count;
+            for (const row of list) {
+                if (!id(row?.id) || rows.has(id(row.id))) throw new Error('列表包含无效或重复记录，请重新读取。');
+                rows.set(id(row.id), row);
+            }
+            if (rows.size === total) return [...rows.values()];
+            if (rows.size > total || !list.length) break;
+        }
+        throw new Error('未能读取完整列表。');
+    }
+
+    function matchingResources(rows, source) {
+        return rows.filter((row) => row.resource === source.resource_resource && id(row.id) !== id(source.resource_id));
+    }
+
+    function matches(resource, key, version) {
+        return resource?.status === 'active' && resource.resource === key && resource.resource_ver === version;
+    }
+
+    function bindingFields(row) {
+        return [id(row.id), id(row.resource_id), row.resource_resource, row.resource_resource_ver, row.status, row.weight];
+    }
+
+    function sameBindings(left, right) {
+        const snapshot = (rows) => JSON.stringify(rows.map(bindingFields).sort((a, b) => a[0].localeCompare(b[0])));
+        return snapshot(left) === snapshot(right);
+    }
+
+    async function replace(request, channelKey, configId, displayed, selected, canSubmit, onStage) {
+        const channel = CHANNELS.find(({ key }) => key === channelKey);
+        if (!channel) throw new Error('未知的辅料页签。');
+        const base = '/sdk/config/' + channel.key;
+        const params = { config_id: configId };
+        async function bindings() {
+            const rows = await allRows(request, base + '/index', params);
+            if (rows.some((row) => id(row.config_id) !== configId)) throw new Error('辅料不属于当前配置。');
+            return rows;
+        }
+        async function checkCandidate() {
+            // The candidate endpoint can report an unfiltered count; locate the exact ID without trusting it.
+            const seen = new Set();
+            for (let page = 1; page <= 1000; page++) {
+                const response = await request(base + '/add/index', { params: { ...params, page, size: 100 } });
+                const list = response.result?.list;
+                if (!Array.isArray(list)) break;
+                for (const row of list) {
+                    if (!id(row?.id) || seen.has(id(row.id))) throw new Error('候选列表格式或分页异常。');
+                    seen.add(id(row.id));
+                }
+                if (list.some((row) => id(row.id) === id(selected.id)
+                    && matches(row, selected.resource, selected.resource_ver))) return;
+                if (!list.length) break;
+            }
+            throw new Error('目标辅料不在当前配置的可添加候选中。');
+        }
+        const before = await bindings();
+        const source = before.find((row) => id(row.id) === id(displayed.id));
+        if (!source || !sameBindings([source], [displayed]) || source.status !== 'active' || !validWeight(source.weight)
+            || !source.resource_resource || typeof source.resource_resource_ver !== 'string'
+            || !id(selected.id) || !matches(selected, source.resource_resource, selected.resource_ver)
+            || typeof selected.resource_ver !== 'string'
+            || before.some((row) => id(row.resource_id) === id(selected.id)
+                || (row !== source && row.resource_resource === source.resource_resource))) {
+            throw new Error('旧辅料已变化、存在重复绑定或目标不符合替换条件，请刷新后检查。');
+        }
+        const directory = await allRows(request, DIRECTORY);
+        if (!matches(directory.find((row) => id(row.id) === id(source.resource_id)), source.resource_resource, source.resource_resource_ver)
+            || !matches(directory.find((row) => id(row.id) === id(selected.id)), selected.resource, selected.resource_ver)) {
+            throw new Error('资源目录已变化，请重新选择。');
+        }
+        await checkCandidate();
+        if (!sameBindings(before, await bindings()) || !canSubmit()) throw new Error('配置或页面已变化，未执行替换。');
+
+        const removed = before.filter((row) => row !== source);
+        const assertBindings = (expected, actual) => {
+            if (!sameBindings(expected, actual)) throw new Error('辅料回读与预期不一致。');
+        };
+        async function write(path, data, stage) {
+            onStage(stage);
+            await request(base + path, { data });
+        }
+        try {
+            await write('/delete', { id: id(source.id) }, '删除旧辅料');
+            assertBindings(removed, await bindings());
+            await checkCandidate();
+            const data = { ...params, resource_id: [id(selected.id)] };
+            const duplicate = await request(base + '/add/duplication', { data });
+            if (!Array.isArray(duplicate.result?.list) || duplicate.result.list.length) {
+                throw new Error('重复校验未通过，已停止新增。');
+            }
+            assertBindings(removed, await bindings());
+            await write('/add', data, '新增目标辅料');
+            const current = await bindings();
+            const added = current.find((row) => id(row.resource_id) === id(selected.id));
+            if (!added || id(added.id) === id(source.id) || added.resource_resource !== selected.resource
+                || added.resource_resource_ver !== selected.resource_ver || added.status !== 'active'
+                || !validWeight(added.weight)) throw new Error('未核验到预期的新辅料。');
+            assertBindings(removed, current.filter((row) => row !== added));
+            if (added.weight !== source.weight) {
+                await write('/update', { id: id(added.id), weight: source.weight }, '恢复原权重');
+                assertBindings([...removed, { ...added, weight: source.weight }], await bindings());
+            }
+        } catch (error) {
+            let summary = '未能核对当前列表';
+            try {
+                const current = await bindings();
+                const old = current.some((row) => id(row.id) === id(source.id));
+                const target = current.find((row) => id(row.resource_id) === id(selected.id));
+                summary = `旧绑定${old ? '仍在' : '已不在'}，目标${target ? `已绑定（权重 ${target.weight}）` : '未绑定'}`;
+            } catch { /* The write outcome is unknown until the page can be read. */ }
+            throw new Error(`替换未完整验证：${error.message}。${summary}。请刷新核对后再处理，未自动重试。`);
+        }
+    }
+
+    function createRequest(win) {
+        let version = '';
+        const proto = win.XMLHttpRequest.prototype;
+        const original = proto.setRequestHeader;
+        proto.setRequestHeader = function (key, value) {
+            if (String(key).toLowerCase() === 'x-token' && value) version = String(value);
+            return original.apply(this, arguments);
+        };
+        return async (path, { params, data } = {}) => {
+            const url = new URL('https://cms-sdk-api.apicmob.com/api/cms2' + path);
+            Object.entries(params || {}).forEach(([key, value]) => url.searchParams.set(key, value));
+            const cookie = win.document.cookie.match(/(?:^|;\s*)appic_cms_main_version=([^;]+)/);
+            const token = version || (cookie && decodeURIComponent(cookie[1]));
+            if (!token) throw new Error('未找到 CMS 版本，请刷新页面。');
+            const headers = { accept: 'application/json, text/plain, */*', 'x-token': token };
+            if (data) headers['content-type'] = 'application/json;charset=UTF-8';
+            const response = await win.fetch(url.toString(), {
+                method: data ? 'POST' : 'GET', credentials: 'include', headers,
+                body: data ? JSON.stringify(data) : undefined,
+                signal: win.AbortSignal.timeout(15000)
+            });
+            if (!response.ok) throw new Error(`CMS 请求失败（HTTP ${response.status}）`);
+            const body = await response.json();
+            if (body?.code !== 200 && body?.code !== 0) throw new Error(body?.msg || 'CMS 返回异常。');
+            return body;
+        };
+    }
+
+    function findTable(win, configId, channel) {
+        const pane = win.document.getElementById(channel.pane);
+        if (!pane || !pane.getClientRects().length) return null;
+        const seen = new Set();
+        function visit(table) {
+            if (!table || seen.has(table) || !pane.contains(table.$el)) return null;
+            seen.add(table);
+            if (table.getTableColumn?.().fullColumn.some((column) => column.property === 'resource_resource')) {
+                for (let vm = table.$parent; vm; vm = vm.$parent) {
+                    if (vm.isActive && id(vm.detailsParams?.id) === configId && typeof vm.GetTableDatas === 'function') {
+                        return { table, vm, channel };
+                    }
+                }
+            }
+            for (const child of table.$children || []) {
+                const found = visit(child);
+                if (found) return found;
+            }
+            return null;
+        }
+        for (const element of [pane, ...pane.querySelectorAll('.vxe-table')]) {
+            const found = visit(element.__vue__);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    function boot(win, runtime) {
+        let request;
+        let attached;
+        let dialog;
+        let busy = false;
+        const active = () => runtime.isEnabled() && routeId(win.location);
+        const versionText = (value) => value || '（空版本）';
+
+        async function open(vm, channel, configId, row) {
+            if (busy || dialog || active() !== configId || !vm.isActive) return;
+            const source = { ...row };
+            const doc = win.document;
+            const make = (tag, value) => {
+                const element = doc.createElement(tag);
+                element.textContent = value || '';
+                return element;
+            };
+            const panel = make('dialog');
+            panel.setAttribute('aria-labelledby', 'apicmob-replace-title');
+            panel.style.cssText = 'width: min(620px, calc(100vw - 32px)); box-sizing: border-box; border: 1px solid #dcdfe6; border-radius: 6px; padding: 20px; color: #303133; overflow-wrap: anywhere;';
+            const heading = make('h3', '替换' + channel.label);
+            heading.id = 'apicmob-replace-title';
+            heading.style.marginTop = '0';
+            const summary = make('p', `当前：${source.resource_resource} / ${versionText(source.resource_resource_ver)}`);
+            const list = make('div');
+            list.style.cssText = 'max-height: min(45vh, 360px); overflow: auto;';
+            const status = make('p', '正在读取资源…');
+            status.setAttribute('role', 'status');
+            const footer = make('div');
+            footer.style.cssText = 'display: flex; justify-content: flex-end; gap: 8px;';
+            const close = make('button', '取消');
+            close.className = 'el-button el-button--default el-button--small';
+            const submit = make('button', '确认替换');
+            submit.className = 'el-button el-button--primary el-button--small';
+            submit.disabled = true;
+            close.onclick = () => panel.close();
+            panel.addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
+            panel.addEventListener('close', () => {
+                panel.remove();
+                if (dialog === panel) dialog = null;
+            });
+            footer.append(close, submit);
+            panel.append(heading, summary, list, status, footer);
+            doc.body.append(panel);
+            dialog = panel;
+            panel.showModal();
+            let selected;
+            let stage = '';
+            const canSubmit = () => active() === configId && vm.isActive && !vm._isDestroyed && panel.open;
+            submit.onclick = async () => {
+                if (busy || !selected || !canSubmit()) return;
+                busy = true;
+                submit.disabled = close.disabled = true;
+                list.querySelectorAll('input').forEach((input) => { input.disabled = true; });
+                status.textContent = '正在核对配置和候选…';
+                try {
+                    await replace(request, channel.key, configId, source, selected, canSubmit, (value) => {
+                        stage = value;
+                        status.textContent = `正在${value}…`;
+                    });
+                    status.textContent = '替换成功，原权重已保留。';
+                } catch (error) {
+                    status.textContent = stage ? `${stage}阶段：${error.message}` : error.message;
+                } finally {
+                    if (stage && routeId(win.location) === configId && !vm._isDestroyed) {
+                        Promise.resolve(vm.GetTableDatas(true)).catch((error) => win.console.error('[辅料替换]', error));
+                    }
+                    busy = false;
+                    close.disabled = false;
+                    close.textContent = '关闭';
+                }
+            };
+            try {
+                request ||= createRequest(win);
+                const candidates = matchingResources(await allRows(request, DIRECTORY), source);
+                if (!canSubmit()) return;
+                let selectable = false;
+                for (const candidate of candidates) {
+                    const label = make('label');
+                    label.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 10px 4px; border-bottom: 1px solid #ebeef5;';
+                    const radio = make('input');
+                    radio.type = 'radio';
+                    radio.name = 'apicmob-replace-target';
+                    radio.disabled = candidate.status !== 'active' || typeof candidate.resource_ver !== 'string';
+                    selectable ||= !radio.disabled;
+                    radio.onchange = () => { selected = candidate; submit.disabled = false; };
+                    label.append(radio, make('span', [
+                        versionText(candidate.resource_ver), candidate.filename, candidate.description,
+                        id(candidate.id), radio.disabled ? '不可选' : ''
+                    ].filter(Boolean).join(' / ')));
+                    list.append(label);
+                }
+                status.textContent = selectable ? '' : '没有可替换的同标识资源。';
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        }
+
+        function sync() {
+            const configId = active();
+            let found;
+            if (configId) {
+                for (const channel of CHANNELS) {
+                    found = findTable(win, configId, channel);
+                    if (found) break;
+                }
+            }
+            if (attached && (attached.table !== found?.table || attached.configId !== configId)) {
+                const { table } = attached;
+                attached = null;
+                if (!table._isDestroyed) {
+                    const columns = table.getTableColumn().collectColumn;
+                    table.loadColumn(columns.filter((column) => column.property !== COLUMN));
+                }
+                if (dialog?.open && !busy) dialog.close();
+            }
+            if (!found || attached) return;
+            const { table, vm, channel } = found;
+            const columns = table.getTableColumn().collectColumn;
+            attached = { table, configId };
+            const next = columns.slice();
+            const keyIndex = next.findIndex((column) => column.property === 'resource_resource');
+            next.splice(keyIndex + 1, 0, {
+                field: COLUMN, title: '替换' + channel.label, width: 95,
+                slots: { default: ({ row }, h) => row.status === 'active' && row.resource_id
+                    ? [h('button', {
+                        class: 'el-button el-button--text el-button--small',
+                        attrs: { type: 'button', title: '替换' + channel.label },
+                        on: { click: (event) => { event.stopPropagation(); open(vm, channel, configId, row); } }
+                    }, ['替换'])] : [] }
+            });
+            Promise.resolve(table.loadColumn(next)).catch((error) => win.console.error('[辅料替换]', error));
+        }
+        runtime.watch(sync);
+    }
+
+    return { routeId, allRows, matchingResources, replace, boot };
+}
+
 function createSdkIntegration() {
     'use strict';
 
@@ -3743,6 +4078,7 @@ function createSdkIntegration() {
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
         placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),
         sdkOverviewLayout: (runtime) => createSdkConfigOverviewLayout().boot(window, runtime),
+        sdkResourceReplace: (runtime) => createSdkResourceReplace().boot(window, runtime),
         integrationControl: (runtime) => createSdkIntegration().bootOverview(window, runtime),
         integrationNaming: (runtime) => createSdkIntegration().bootNaming(window, runtime)
     });

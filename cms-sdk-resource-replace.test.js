@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { routeId, allRows, matchingResources, replace, boot } = require('./src/features/sdk-resource-replace');
+const { routeId, allRows, matchingResources, filterResources, replace, boot } = require('./src/features/sdk-resource-replace');
 
 const configId = 'config-example';
 const old = { id: 'binding-old', config_id: configId, resource_id: 'def-old', resource_resource: 'banner',
@@ -11,6 +11,20 @@ const other = { ...old, id: 'binding-other', resource_id: 'def-other', resource_
 const target = { id: 'def-new', resource: 'banner', resource_ver: '01', status: 'active' };
 const definitions = [{ ...target, id: 'def-old', resource_ver: '' }, target];
 const result = (list, count = list.length) => ({ count, result: { list } });
+
+test('filters by CMS remark and raw dynamic version together without matching additional info', () => {
+    const rows = [
+        { description: '正式发布 RC', resource_ver: 'V01-debug' },
+        { description: '正式发布', resource_ver: '' },
+        { description: '归档', remark: '正式', resource_ver: 'v01' },
+        { resource_ver: 'v02' }
+    ];
+    assert.deepEqual(filterResources(rows, '  正式 ', ' v01 '), [rows[0]]);
+    assert.deepEqual(filterResources(rows, '', 'V01'), [rows[0], rows[2]]);
+    assert.deepEqual(filterResources(rows, 'rc', ''), [rows[0]]);
+    assert.deepEqual(filterResources(rows, '正式', ''), rows.slice(0, 2));
+    assert.deepEqual(filterResources(rows, '', '   '), rows);
+});
 
 test('both panes add a button to the native action cell without inserting a table column', () => {
     const nativeActions = () => ['edit', 'delete'];

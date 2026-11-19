@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.12
+// @version      1.2.13
 // @description  整合动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、辅料替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.12';
+    const VERSION = '1.2.13';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -3449,6 +3449,7 @@ function createSdkResourceReplace() {
     ];
     const DIRECTORY = '/sdk/resource/index';
     const id = (value) => String(value ?? '');
+    const remark = (value) => value ?? '';
     const validWeight = (value) => Number.isInteger(value) && value >= 0 && value <= 100;
 
     function routeId(location) {
@@ -3477,15 +3478,28 @@ function createSdkResourceReplace() {
     }
 
     function matchingResources(rows, source) {
-        return rows.filter((row) => row.resource === source.resource_resource && id(row.id) !== id(source.resource_id));
+        const binding = Object.hasOwn(source, 'resource_id');
+        const key = binding ? source.resource_resource : source.resource;
+        const extra = binding ? source.resource_remark : source.remark;
+        return rows.filter((row) => row.resource === key && remark(row.remark) === remark(extra)
+            && id(row.id) !== id(binding ? source.resource_id : source.id));
     }
 
-    function matches(resource, key, version) {
-        return resource?.status === 'active' && resource.resource === key && resource.resource_ver === version;
+    function filterResources(rows, remark, version) {
+        const noteQuery = remark.trim().toLowerCase();
+        const versionQuery = version.trim().toLowerCase();
+        return rows.filter((row) => String(row.description ?? '').toLowerCase().includes(noteQuery)
+            && String(row.resource_ver ?? '').toLowerCase().includes(versionQuery));
+    }
+
+    function matches(resource, key, version, extra) {
+        return resource?.status === 'active' && resource.resource === key && resource.resource_ver === version
+            && remark(resource.remark) === remark(extra);
     }
 
     function bindingFields(row) {
-        return [id(row.id), id(row.resource_id), row.resource_resource, row.resource_resource_ver, row.status, row.weight];
+        return [id(row.id), id(row.resource_id), row.resource_resource, remark(row.resource_remark),
+            row.resource_resource_ver, row.status, row.weight];
     }
 
     function sameBindings(left, right) {
@@ -3493,7 +3507,7 @@ function createSdkResourceReplace() {
         return snapshot(left) === snapshot(right);
     }
 
-    async function replace(request, channelKey, configId, displayed, selected, canSubmit, onStage) {
+    async function prepareReplacement(request, channelKey, configId, displayed, selected, catalog) {
         const channel = CHANNELS.find(({ key }) => key === channelKey);
         if (!channel) throw new Error('未知的辅料页签。');
         const base = '/sdk/config/' + channel.key;
@@ -3515,7 +3529,7 @@ function createSdkResourceReplace() {
                     seen.add(id(row.id));
                 }
                 if (list.some((row) => id(row.id) === id(selected.id)
-                    && matches(row, selected.resource, selected.resource_ver))) return;
+                    && matches(row, selected.resource, selected.resource_ver, selected.remark))) return;
                 if (!list.length) break;
             }
             throw new Error('目标辅料不在当前配置的可添加候选中。');
@@ -3524,25 +3538,36 @@ function createSdkResourceReplace() {
         const source = before.find((row) => id(row.id) === id(displayed.id));
         if (!source || !sameBindings([source], [displayed]) || source.status !== 'active' || !validWeight(source.weight)
             || !source.resource_resource || typeof source.resource_resource_ver !== 'string'
-            || !id(selected.id) || !matches(selected, source.resource_resource, selected.resource_ver)
+            || !id(selected.id) || !matches(selected, source.resource_resource, selected.resource_ver, source.resource_remark)
             || typeof selected.resource_ver !== 'string'
             || before.some((row) => id(row.resource_id) === id(selected.id)
                 || (row !== source && row.resource_resource === source.resource_resource))) {
             throw new Error('旧辅料已变化、存在重复绑定或目标不符合替换条件，请刷新后检查。');
         }
-        const directory = await allRows(request, DIRECTORY);
-        if (!matches(directory.find((row) => id(row.id) === id(source.resource_id)), source.resource_resource, source.resource_resource_ver)
-            || !matches(directory.find((row) => id(row.id) === id(selected.id)), selected.resource, selected.resource_ver)) {
+        const directory = catalog || await allRows(request, DIRECTORY);
+        if (!matches(directory.find((row) => id(row.id) === id(source.resource_id)), source.resource_resource,
+            source.resource_resource_ver, source.resource_remark)
+            || !matches(directory.find((row) => id(row.id) === id(selected.id)), selected.resource,
+                selected.resource_ver, selected.remark)) {
             throw new Error('资源目录已变化，请重新选择。');
         }
         await checkCandidate();
+        return { base, params, before, source, bindings, checkCandidate };
+    }
+
+    async function replace(request, channelKey, configId, displayed, selected, canSubmit, onStage, guard = async () => {}) {
+        const { base, params, before, source, bindings, checkCandidate } =
+            await prepareReplacement(request, channelKey, configId, displayed, selected);
+        await guard();
         if (!sameBindings(before, await bindings()) || !canSubmit()) throw new Error('配置或页面已变化，未执行替换。');
 
         const removed = before.filter((row) => row !== source);
         const assertBindings = (expected, actual) => {
             if (!sameBindings(expected, actual)) throw new Error('辅料回读与预期不一致。');
         };
-        async function write(path, data, stage) {
+        let stage = '';
+        async function write(path, data, nextStage) {
+            stage = nextStage;
             onStage(stage);
             await request(base + path, { data });
         }
@@ -3560,6 +3585,7 @@ function createSdkResourceReplace() {
             const current = await bindings();
             const added = current.find((row) => id(row.resource_id) === id(selected.id));
             if (!added || id(added.id) === id(source.id) || added.resource_resource !== selected.resource
+                || remark(added.resource_remark) !== remark(selected.remark)
                 || added.resource_resource_ver !== selected.resource_ver || added.status !== 'active'
                 || !validWeight(added.weight)) throw new Error('未核验到预期的新辅料。');
             assertBindings(removed, current.filter((row) => row !== added));
@@ -3567,6 +3593,7 @@ function createSdkResourceReplace() {
                 await write('/update', { id: id(added.id), weight: source.weight }, '恢复原权重');
                 assertBindings([...removed, { ...added, weight: source.weight }], await bindings());
             }
+            return { ...added, weight: source.weight };
         } catch (error) {
             let summary = '未能核对当前列表';
             try {
@@ -3575,7 +3602,10 @@ function createSdkResourceReplace() {
                 const target = current.find((row) => id(row.resource_id) === id(selected.id));
                 summary = `旧绑定${old ? '仍在' : '已不在'}，目标${target ? `已绑定（权重 ${target.weight}）` : '未绑定'}`;
             } catch { /* The write outcome is unknown until the page can be read. */ }
-            throw new Error(`替换未完整验证：${error.message}。${summary}。请刷新核对后再处理，未自动重试。`);
+            const failure = new Error(`替换未完整验证：${error.message}。${summary}。请刷新核对后再处理，未自动重试。`);
+            failure.writeStarted = Boolean(stage);
+            failure.stage = stage;
+            throw failure;
         }
     }
 
@@ -3656,13 +3686,43 @@ function createSdkResourceReplace() {
             };
             const panel = make('dialog');
             panel.setAttribute('aria-labelledby', 'apicmob-replace-title');
-            panel.style.cssText = 'width: min(620px, calc(100vw - 32px)); box-sizing: border-box; border: 1px solid #dcdfe6; border-radius: 6px; padding: 20px; color: #303133; overflow-wrap: anywhere;';
+            panel.style.cssText = 'width: min(820px, calc(100vw - 32px)); box-sizing: border-box; border: 1px solid #dcdfe6; border-radius: 6px; padding: 20px; color: #303133; overflow-wrap: anywhere;';
             const heading = make('h3', '替换' + channel.label);
             heading.id = 'apicmob-replace-title';
             heading.style.marginTop = '0';
             const summary = make('p', `当前：${source.resource_resource} / ${versionText(source.resource_resource_ver)}`);
+            const filters = make('div');
+            filters.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;';
+            function makeFilter(name) {
+                const input = make('input');
+                input.type = 'search';
+                input.className = 'el-input__inner';
+                input.placeholder = name;
+                input.setAttribute('aria-label', name);
+                input.style.cssText = 'flex: 1 1 160px; min-width: 0; width: auto; height: 32px; box-sizing: border-box;';
+                filters.append(input);
+                return input;
+            }
+            const remarkFilter = makeFilter('筛选备注');
+            const versionFilter = makeFilter('筛选动态版本');
+            remarkFilter.disabled = versionFilter.disabled = true;
             const list = make('div');
-            list.style.cssText = 'max-height: min(45vh, 360px); overflow: auto;';
+            list.style.cssText = 'max-height: min(45vh, 360px); overflow: auto; border: 1px solid #ebeef5;';
+            const table = make('table');
+            table.style.cssText = 'width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 13px;';
+            const head = make('thead');
+            const header = make('tr');
+            for (const [name, width] of [['选择', '48px'], ['动态版本', '24%'], ['备注', ''], ['原文件名', '30%']]) {
+                const cell = make('th', name);
+                cell.scope = 'col';
+                cell.style.cssText = 'position: sticky; top: 0; z-index: 1; padding: 8px; background: #f5f7fa; border-bottom: 1px solid #ebeef5;';
+                cell.style.width = width;
+                header.append(cell);
+            }
+            head.append(header);
+            const body = make('tbody');
+            table.append(head, body);
+            list.append(table);
             const status = make('p', '正在读取资源…');
             status.setAttribute('role', 'status');
             const footer = make('div');
@@ -3679,7 +3739,7 @@ function createSdkResourceReplace() {
                 if (dialog === panel) dialog = null;
             });
             footer.append(close, submit);
-            panel.append(heading, summary, list, status, footer);
+            panel.append(heading, summary, filters, list, status, footer);
             doc.body.append(panel);
             dialog = panel;
             panel.showModal();
@@ -3690,6 +3750,7 @@ function createSdkResourceReplace() {
                 if (busy || !selected || !canSubmit()) return;
                 busy = true;
                 submit.disabled = close.disabled = true;
+                remarkFilter.disabled = versionFilter.disabled = true;
                 list.querySelectorAll('input').forEach((input) => { input.disabled = true; });
                 status.textContent = '正在核对配置和候选…';
                 try {
@@ -3721,23 +3782,44 @@ function createSdkResourceReplace() {
                 }
                 const candidates = matchingResources(await allRows(request, DIRECTORY), source);
                 if (!canSubmit()) return;
-                let selectable = false;
-                for (const candidate of candidates) {
-                    const label = make('label');
-                    label.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 10px 4px; border-bottom: 1px solid #ebeef5;';
-                    const radio = make('input');
-                    radio.type = 'radio';
-                    radio.name = 'apicmob-replace-target';
-                    radio.disabled = candidate.status !== 'active' || typeof candidate.resource_ver !== 'string';
-                    selectable ||= !radio.disabled;
-                    radio.onchange = () => { selected = candidate; submit.disabled = false; };
-                    label.append(radio, make('span', [
-                        versionText(candidate.resource_ver), candidate.filename, candidate.description,
-                        id(candidate.id), radio.disabled ? '不可选' : ''
-                    ].filter(Boolean).join(' / ')));
-                    list.append(label);
+                function renderCandidates() {
+                    const visible = filterResources(candidates, remarkFilter.value, versionFilter.value);
+                    if (!visible.includes(selected)) selected = undefined;
+                    submit.disabled = !selected;
+                    body.replaceChildren();
+                    let selectable = false;
+                    for (const candidate of visible) {
+                        const entry = make('tr');
+                        function cell(value) {
+                            const element = make('td', value);
+                            element.style.cssText = 'padding: 8px; border-bottom: 1px solid #ebeef5; vertical-align: top;';
+                            entry.append(element);
+                            return element;
+                        }
+                        const radio = make('input');
+                        radio.type = 'radio';
+                        radio.name = 'apicmob-replace-target';
+                        radio.checked = candidate === selected;
+                        radio.disabled = candidate.status !== 'active' || typeof candidate.resource_ver !== 'string';
+                        radio.setAttribute('aria-label', `选择 ${versionText(candidate.resource_ver)} ${id(candidate.id)}`);
+                        selectable ||= !radio.disabled;
+                        radio.onchange = () => { selected = candidate; submit.disabled = false; };
+                        cell().append(radio);
+                        const version = cell(versionText(candidate.resource_ver));
+                        if (radio.disabled) version.append(make('div', '不可选'));
+                        cell(candidate.description || '无');
+                        const file = cell(candidate.filename || '无');
+                        const definitionId = make('div', id(candidate.id));
+                        definitionId.style.color = '#606266';
+                        file.append(definitionId);
+                        body.append(entry);
+                    }
+                    status.textContent = !candidates.length ? '没有同标识资源。' : !visible.length ? '没有符合筛选条件的资源。'
+                        : !selectable ? `${visible.length} 条，无可替换资源。` : `${visible.length} / ${candidates.length} 条`;
                 }
-                status.textContent = selectable ? '' : '没有可替换的同标识资源。';
+                remarkFilter.disabled = versionFilter.disabled = false;
+                remarkFilter.oninput = versionFilter.oninput = renderCandidates;
+                renderCandidates();
             } catch (error) {
                 status.textContent = error.message;
             }
@@ -3784,7 +3866,7 @@ function createSdkResourceReplace() {
         runtime.watch(sync);
     }
 
-    return { routeId, allRows, matchingResources, replace, boot };
+    return { routeId, allRows, matchingResources, filterResources, prepareReplacement, sameBindings, createRequest, replace, boot };
 }
 
 function createSdkIntegration() {

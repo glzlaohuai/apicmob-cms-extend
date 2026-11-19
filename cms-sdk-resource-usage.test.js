@@ -335,3 +335,26 @@ test('dialog locks duplicate submissions and close attempts, then retains partia
     ui.button('关闭').onclick();
     assert.equal(ui.panel.open, false);
 });
+
+test('dialog keeps IDs out of visible text and drops a target hidden by the filters', async () => {
+    const ui = dialogHarness(fixture().request);
+    await new Promise(setImmediate);
+    assert.doesNotMatch(ui.panel.textContent, /def-(old|new)|app-\d|config-\d/);
+    const config = ui.find((el) => el.dataset.choice === 'config' && el.dataset.unavailable === 'false');
+    config.checked = true;
+    config.onchange();
+    const target = () => ui.find((el) => el.dataset.choice === 'target');
+    target().onchange();
+    const submit = ui.button('一键替换');
+    assert.equal(submit.disabled, false);
+    const filter = ui.find((el) => el.placeholder === '筛选动态版本');
+    filter.value = 'missing';
+    filter.oninput();
+    assert.equal(target(), undefined);
+    assert.equal(submit.disabled, true);
+    assert.match(ui.panel.textContent, /没有符合筛选条件的资源/);
+    filter.value = '';
+    filter.oninput();
+    assert.equal(target().checked, false);
+    assert.equal(submit.disabled, true);
+});

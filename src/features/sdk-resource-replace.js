@@ -13,6 +13,88 @@
     const id = (value) => String(value ?? '');
     const remark = (value) => value ?? '';
     const validWeight = (value) => Number.isInteger(value) && value >= 0 && value <= 100;
+    const DIALOG_STYLE = `
+        .apicmob-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-sizing: border-box; padding: 0; border: none; border-radius: 8px; color: #303133; background: #fff; box-shadow: 0 12px 32px #0000001f, 0 2px 6px #00000014; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 0; overflow: hidden; }
+        .apicmob-dialog.apicmob-dialog-wide { width: min(1080px, calc(100vw - 32px)); }
+        .apicmob-dialog[open] { display: flex; flex-direction: column; animation: apicmob-dialog-in .16s ease-out; }
+        .apicmob-dialog::backdrop { background: #00000073; }
+        .apicmob-dialog * { box-sizing: border-box; }
+        @keyframes apicmob-dialog-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+        @keyframes apicmob-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .apicmob-dialog[open] { animation: none; } }
+        .apicmob-dialog .dlg-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px 8px; }
+        .apicmob-dialog .dlg-head h3 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
+        .apicmob-dialog .dlg-x { width: 32px; height: 32px; padding: 0; border: none; border-radius: 6px; background: none; color: #909399; font-size: 20px; line-height: 32px; cursor: pointer; }
+        .apicmob-dialog .dlg-x:hover:not(:disabled) { background: #f2f3f5; color: #303133; }
+        .apicmob-dialog .dlg-x:disabled { opacity: .4; cursor: not-allowed; }
+        .apicmob-dialog .dlg-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 20px 20px; overflow-wrap: anywhere; }
+        .apicmob-dialog .dlg-foot { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-top: 1px solid #ebeef5; background: #fafbfc; }
+        .apicmob-dialog .dlg-actions { display: flex; flex-shrink: 0; gap: 8px; }
+        .apicmob-dialog .el-button { margin: 0; padding: 7px 16px; font-size: 13px; line-height: 18px; }
+        .apicmob-dialog .el-button--text { padding: 7px 4px; }
+        .apicmob-dialog .el-button:disabled { opacity: .5; cursor: not-allowed; }
+        .apicmob-dialog .dlg-source { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 12px; border-radius: 6px; background: #f5f7fa; }
+        .apicmob-dialog .dlg-source-label { color: #909399; font-size: 12px; }
+        .apicmob-dialog .dlg-key { font: 600 14px/22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+        .apicmob-dialog .dlg-note { flex-basis: 100%; color: #909399; font-size: 12px; }
+        .apicmob-dialog .tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: #f0f2f5; color: #606266; font-size: 12px; line-height: 20px; white-space: nowrap; }
+        .apicmob-dialog .tag:empty { display: none; }
+        .apicmob-dialog .tag-primary { background: #ecf5ff; color: #337ecc; }
+        .apicmob-dialog .tag-success { background: #f0f9eb; color: #529b2e; }
+        .apicmob-dialog .tag-warning { background: #fdf6ec; color: #b88230; }
+        .apicmob-dialog .tag-danger { background: #fef0f0; color: #c45656; }
+        .apicmob-dialog .dlg-section { margin-top: 20px; }
+        .apicmob-dialog .dlg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 16px 0 8px; }
+        .apicmob-dialog .dlg-section .dlg-toolbar { margin-top: 0; }
+        .apicmob-dialog .dlg-toolbar input[type=search] { flex: 0 1 180px; width: auto; min-width: 120px; height: 32px; padding: 0 10px; line-height: 32px; }
+        .apicmob-dialog .dlg-step { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; }
+        .apicmob-dialog .dlg-step-num { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #409eff; color: #fff; font-size: 12px; }
+        .apicmob-dialog .dlg-meta { color: #909399; font-size: 12px; }
+        .apicmob-dialog .dlg-push { margin-left: auto; }
+        .apicmob-dialog .dlg-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+        .apicmob-dialog .dlg-list { max-height: min(48vh, 420px); overflow: auto; border: 1px solid #ebeef5; border-radius: 6px; }
+        .apicmob-dialog .dlg-refs { max-height: 34vh; }
+        .apicmob-dialog .dlg-section .dlg-targets { max-height: 28vh; }
+        .apicmob-dialog .dlg-row { display: grid; align-items: center; gap: 4px 12px; padding: 10px 12px; border-bottom: 1px solid #f0f2f5; cursor: pointer; transition: background-color .12s; }
+        .apicmob-dialog .dlg-targets .dlg-row { grid-template-columns: 16px minmax(96px, .8fr) minmax(0, 1.4fr) minmax(0, 1.2fr); }
+        .apicmob-dialog .dlg-refs .dlg-row { grid-template-columns: 16px minmax(0, 1fr) minmax(0, 1.2fr) 112px 140px minmax(0, 1.6fr); align-items: start; }
+        .apicmob-dialog .dlg-row:last-child { border-bottom: none; }
+        .apicmob-dialog .dlg-row:hover { background: #f5f7fa; }
+        .apicmob-dialog .dlg-row:has(input:checked) { background: #ecf5ff; box-shadow: inset 3px 0 #409eff; }
+        .apicmob-dialog .dlg-row:has(input:focus-visible) { outline: 2px solid #409eff; outline-offset: -2px; }
+        .apicmob-dialog .dlg-row:not(.is-unavailable):has(input:disabled) { cursor: default; }
+        .apicmob-dialog .dlg-row.is-unavailable { color: #a8abb2; background: none; cursor: not-allowed; }
+        .apicmob-dialog .dlg-row.is-unavailable .tag { opacity: .7; }
+        .apicmob-dialog .dlg-row-head, .apicmob-dialog .dlg-row-head:hover { position: sticky; top: 0; z-index: 1; padding-block: 8px; background: #fafafa; color: #909399; font-size: 12px; cursor: default; }
+        .apicmob-dialog .dlg-row input { margin: 3px 0 0; accent-color: #409eff; cursor: inherit; }
+        .apicmob-dialog .dlg-row > span { min-width: 0; }
+        .apicmob-dialog .dlg-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600; }
+        .apicmob-dialog .dlg-mono + .tag { margin-left: 6px; }
+        .apicmob-dialog .dlg-sub { color: #909399; font-size: 12px; }
+        .apicmob-dialog .dlg-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+        .apicmob-dialog .dlg-lines > * { display: block; font-size: 12px; }
+        .apicmob-dialog .dlg-reason { grid-column: 2 / -1; color: #c45656; font-size: 12px; }
+        .apicmob-dialog .dlg-empty { padding: 32px 12px; color: #909399; text-align: center; }
+        .apicmob-dialog .dlg-alert { margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: #fef0f0; color: #c45656; font-size: 12px; }
+        .apicmob-dialog .dlg-alert:empty, .apicmob-dialog .dlg-results:empty { display: none; }
+        .apicmob-dialog .dlg-alert p { margin: 2px 0; }
+        .apicmob-dialog .dlg-results { margin-top: 16px; padding: 12px; border: 1px solid #ebeef5; border-radius: 6px; }
+        .apicmob-dialog .dlg-results h4 { margin: 0 0 4px; font-size: 14px; }
+        .apicmob-dialog .dlg-result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 0; border-top: 1px solid #f0f2f5; }
+        .apicmob-dialog .dlg-result:first-of-type { border-top: none; }
+        .apicmob-dialog .dlg-result details { flex-basis: 100%; color: #909399; font-size: 12px; }
+        .apicmob-dialog .dlg-result summary { width: fit-content; cursor: pointer; }
+        .apicmob-dialog .dlg-status { flex: 1; min-width: 0; margin: 0; color: #606266; font-size: 13px; }
+        .apicmob-dialog .dlg-status.is-error { color: #c45656; }
+        .apicmob-dialog .dlg-status.is-success { color: #529b2e; }
+        .apicmob-dialog .dlg-status.is-loading::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px; border: 2px solid #409eff; border-right-color: transparent; border-radius: 50%; animation: apicmob-spin .8s linear infinite; }
+        @media (max-width: 720px) {
+            .apicmob-dialog .dlg-targets .dlg-row, .apicmob-dialog .dlg-refs .dlg-row { grid-template-columns: 16px minmax(0, 1fr); }
+            .apicmob-dialog .dlg-row > :not(:first-child) { grid-column: 2; }
+            .apicmob-dialog .dlg-row-head { display: none; }
+            .apicmob-dialog .dlg-toolbar input[type=search] { flex: 1 1 140px; margin-left: 0; }
+        }
+    `;
 
     function routeId(location) {
         const [path, query] = location.hash.split('?');
@@ -241,67 +323,68 @@
             if (busy || dialog || active() !== configId || !vm.isActive) return;
             const source = { ...row };
             const doc = win.document;
-            const make = (tag, value) => {
+            const make = (tag, text, className) => {
                 const element = doc.createElement(tag);
-                element.textContent = value || '';
+                if (text !== undefined) element.textContent = text;
+                if (className) element.className = className;
                 return element;
             };
-            const panel = make('dialog');
+            const panel = make('dialog', undefined, 'apicmob-dialog');
             panel.setAttribute('aria-labelledby', 'apicmob-replace-title');
-            panel.style.cssText = 'width: min(820px, calc(100vw - 32px)); box-sizing: border-box; border: 1px solid #dcdfe6; border-radius: 6px; padding: 20px; color: #303133; overflow-wrap: anywhere;';
+            const head = make('div', undefined, 'dlg-head');
             const heading = make('h3', '替换' + channel.label);
             heading.id = 'apicmob-replace-title';
-            heading.style.marginTop = '0';
-            const summary = make('p', `当前：${source.resource_resource} / ${versionText(source.resource_resource_ver)}`);
-            const filters = make('div');
-            filters.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;';
+            const dismiss = make('button', '×', 'dlg-x');
+            dismiss.type = 'button';
+            dismiss.setAttribute('aria-label', '关闭');
+            head.append(heading, dismiss);
+            const card = make('div', undefined, 'dlg-source');
+            const remarkTag = make('span', remark(source.resource_remark), 'tag');
+            remarkTag.title = '附加信息';
+            card.append(make('span', '当前', 'dlg-source-label'), make('span', source.resource_resource, 'dlg-key'), remarkTag,
+                make('span', source.resource_resource_ver ? '版本 ' + source.resource_resource_ver : '空版本', 'tag tag-primary'));
+            if (validWeight(source.weight)) card.append(make('span', `权重 ${source.weight}`, 'tag'));
+            const toolbar = make('div', undefined, 'dlg-toolbar');
             function makeFilter(name) {
-                const input = make('input');
+                const input = make('input', undefined, 'el-input__inner');
                 input.type = 'search';
-                input.className = 'el-input__inner';
                 input.placeholder = name;
                 input.setAttribute('aria-label', name);
-                input.style.cssText = 'flex: 1 1 160px; min-width: 0; width: auto; height: 32px; box-sizing: border-box;';
-                filters.append(input);
+                input.disabled = true;
+                toolbar.append(input);
                 return input;
             }
             const remarkFilter = makeFilter('筛选备注');
             const versionFilter = makeFilter('筛选动态版本');
-            remarkFilter.disabled = versionFilter.disabled = true;
-            const list = make('div');
-            list.style.cssText = 'max-height: min(45vh, 360px); overflow: auto; border: 1px solid #ebeef5;';
-            const table = make('table');
-            table.style.cssText = 'width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 13px;';
-            const head = make('thead');
-            const header = make('tr');
-            for (const [name, width] of [['选择', '48px'], ['动态版本', '24%'], ['备注', ''], ['原文件名', '30%']]) {
-                const cell = make('th', name);
-                cell.scope = 'col';
-                cell.style.cssText = 'position: sticky; top: 0; z-index: 1; padding: 8px; background: #f5f7fa; border-bottom: 1px solid #ebeef5;';
-                cell.style.width = width;
-                header.append(cell);
-            }
-            head.append(header);
-            const body = make('tbody');
-            table.append(head, body);
-            list.append(table);
-            const status = make('p', '正在读取资源…');
+            const count = make('span', '', 'dlg-meta dlg-push');
+            toolbar.append(count);
+            const list = make('div', undefined, 'dlg-list dlg-targets');
+            list.setAttribute('role', 'radiogroup');
+            list.setAttribute('aria-label', '候选资源');
+            list.append(make('div', '正在读取…', 'dlg-empty'));
+            const body = make('div', undefined, 'dlg-body');
+            body.append(card, toolbar, list);
+            const status = make('p');
             status.setAttribute('role', 'status');
-            const footer = make('div');
-            footer.style.cssText = 'display: flex; justify-content: flex-end; gap: 8px;';
-            const close = make('button', '取消');
-            close.className = 'el-button el-button--default el-button--small';
-            const submit = make('button', '确认替换');
-            submit.className = 'el-button el-button--primary el-button--small';
+            const setStatus = (text, tone) => {
+                status.textContent = text;
+                status.className = tone ? 'dlg-status is-' + tone : 'dlg-status';
+            };
+            setStatus('正在读取资源…', 'loading');
+            const actions = make('div', undefined, 'dlg-actions');
+            const close = make('button', '取消', 'el-button el-button--default el-button--small');
+            const submit = make('button', '确认替换', 'el-button el-button--primary el-button--small');
             submit.disabled = true;
-            close.onclick = () => panel.close();
+            close.onclick = dismiss.onclick = () => panel.close();
             panel.addEventListener('cancel', (event) => { if (busy) event.preventDefault(); });
             panel.addEventListener('close', () => {
                 panel.remove();
                 if (dialog === panel) dialog = null;
             });
-            footer.append(close, submit);
-            panel.append(heading, summary, filters, list, status, footer);
+            actions.append(close, submit);
+            const foot = make('div', undefined, 'dlg-foot');
+            foot.append(status, actions);
+            panel.append(make('style', DIALOG_STYLE), head, body, foot);
             doc.body.append(panel);
             dialog = panel;
             panel.showModal();
@@ -311,24 +394,24 @@
             submit.onclick = async () => {
                 if (busy || !selected || !canSubmit()) return;
                 busy = true;
-                submit.disabled = close.disabled = true;
+                submit.disabled = close.disabled = dismiss.disabled = true;
                 remarkFilter.disabled = versionFilter.disabled = true;
                 list.querySelectorAll('input').forEach((input) => { input.disabled = true; });
-                status.textContent = '正在核对配置和候选…';
+                setStatus('正在核对配置和候选…', 'loading');
                 try {
                     await replace(request, channel.key, configId, source, selected, canSubmit, (value) => {
                         stage = value;
-                        status.textContent = `正在${value}…`;
+                        setStatus(`正在${value}…`, 'loading');
                     });
-                    status.textContent = '替换成功，原权重已保留。';
+                    setStatus('替换成功，原权重已保留。', 'success');
                 } catch (error) {
-                    status.textContent = stage ? `${stage}阶段：${error.message}` : error.message;
+                    setStatus(stage ? `${stage}阶段：${error.message}` : error.message, 'error');
                 } finally {
                     if (stage && routeId(win.location) === configId && !vm._isDestroyed) {
                         Promise.resolve(vm.GetTableDatas(true)).catch((error) => win.console.error('[辅料替换]', error));
                     }
                     busy = false;
-                    close.disabled = false;
+                    close.disabled = dismiss.disabled = false;
                     close.textContent = '关闭';
                 }
             };
@@ -344,49 +427,60 @@
                     }
                     source.resource_id = fresh.resource_id;
                     source.resource_remark = fresh.resource_remark;
+                    remarkTag.textContent = remark(source.resource_remark);
                 }
                 const candidates = matchingResources(await allRows(request, DIRECTORY), source);
                 if (!canSubmit()) return;
+                let selectable = false;
+                const hint = () => setStatus(selected
+                    ? `将替换为 ${versionText(selected.resource_ver)}${selected.filename ? `（${selected.filename}）` : ''}，保留原权重。`
+                    : selectable ? '请选择替换目标。' : candidates.length ? '没有可选的启用资源。' : '');
                 function renderCandidates() {
                     const visible = filterResources(candidates, remarkFilter.value, versionFilter.value);
                     if (!visible.includes(selected)) selected = undefined;
                     submit.disabled = !selected;
-                    body.replaceChildren();
-                    let selectable = false;
+                    list.replaceChildren();
+                    selectable = false;
+                    if (visible.length) {
+                        const header = make('div', undefined, 'dlg-row dlg-row-head');
+                        header.setAttribute('aria-hidden', 'true');
+                        ['', '动态版本', '原文件名', '备注'].forEach((name) => header.append(make('span', name)));
+                        list.append(header);
+                    } else {
+                        list.append(make('div', candidates.length ? '没有符合筛选条件的资源' : '没有同标识的其他资源', 'dlg-empty'));
+                    }
                     for (const candidate of visible) {
-                        const entry = make('tr');
-                        function cell(value) {
-                            const element = make('td', value);
-                            element.style.cssText = 'padding: 8px; border-bottom: 1px solid #ebeef5; vertical-align: top;';
-                            entry.append(element);
-                            return element;
-                        }
+                        const blocked = candidate.status !== 'active' ? '未启用'
+                            : typeof candidate.resource_ver !== 'string' ? '版本异常' : '';
+                        const entry = make('label', undefined, blocked ? 'dlg-row is-unavailable' : 'dlg-row');
                         const radio = make('input');
                         radio.type = 'radio';
                         radio.name = 'apicmob-replace-target';
                         radio.checked = candidate === selected;
-                        radio.disabled = candidate.status !== 'active' || typeof candidate.resource_ver !== 'string';
-                        radio.setAttribute('aria-label', `选择 ${versionText(candidate.resource_ver)} ${id(candidate.id)}`);
-                        selectable ||= !radio.disabled;
-                        radio.onchange = () => { selected = candidate; submit.disabled = false; };
-                        cell().append(radio);
-                        const version = cell(versionText(candidate.resource_ver));
-                        if (radio.disabled) version.append(make('div', '不可选'));
-                        cell(candidate.description || '无');
-                        const file = cell(candidate.filename || '无');
-                        const definitionId = make('div', id(candidate.id));
-                        definitionId.style.color = '#606266';
-                        file.append(definitionId);
-                        body.append(entry);
+                        radio.disabled = Boolean(blocked);
+                        radio.setAttribute('aria-label', `选择 ${versionText(candidate.resource_ver)} ${candidate.filename || ''}`.trim());
+                        selectable ||= !blocked;
+                        radio.onchange = () => {
+                            selected = candidate;
+                            submit.disabled = false;
+                            hint();
+                        };
+                        const version = make('span');
+                        version.append(make('span', versionText(candidate.resource_ver), 'dlg-mono'));
+                        if (blocked) version.append(make('span', blocked, 'tag tag-danger'));
+                        entry.append(radio, version, make('span', candidate.filename || '—'),
+                            make('span', candidate.description || '—', candidate.description ? undefined : 'dlg-sub'));
+                        list.append(entry);
                     }
-                    status.textContent = !candidates.length ? '没有同标识资源。' : !visible.length ? '没有符合筛选条件的资源。'
-                        : !selectable ? `${visible.length} 条，无可替换资源。` : `${visible.length} / ${candidates.length} 条`;
+                    count.textContent = candidates.length ? `${visible.length} / ${candidates.length} 条` : '';
+                    hint();
                 }
                 remarkFilter.disabled = versionFilter.disabled = false;
                 remarkFilter.oninput = versionFilter.oninput = renderCandidates;
                 renderCandidates();
             } catch (error) {
-                status.textContent = error.message;
+                list.replaceChildren(make('div', '未能读取候选资源', 'dlg-empty'));
+                setStatus(error.message, 'error');
             }
         }
 
@@ -431,5 +525,5 @@
         runtime.watch(sync);
     }
 
-    return { routeId, allRows, matchingResources, filterResources, prepareReplacement, sameBindings, createRequest, replace, boot };
+    return { DIALOG_STYLE, routeId, allRows, matchingResources, filterResources, prepareReplacement, sameBindings, createRequest, replace, boot };
 });

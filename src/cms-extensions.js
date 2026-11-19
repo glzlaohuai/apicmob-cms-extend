@@ -11,7 +11,7 @@
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.15';
+    const VERSION = '1.2.16';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([

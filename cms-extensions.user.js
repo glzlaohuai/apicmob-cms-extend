@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.16
-// @description  整合登录态临时保护、动态报表返回、模组套用模板、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
+// @version      1.2.17
+// @description  整合登录态临时保护、动态报表返回、模组套用模板及工具栏常驻、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
 // @downloadURL  https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
@@ -20,7 +20,7 @@ function createCmsExtensions() {
     'use strict';
 
     const STORAGE_KEY = 'apicmob-cms-extensions::settings';
-    const VERSION = '1.2.16';
+    const VERSION = '1.2.17';
     const SETTINGS_PARAM = 'apicmob-cms-settings';
     const PENDING_KEY = 'apicmob-apply-template::pending';
     const FEATURES = Object.freeze([
@@ -31,7 +31,8 @@ function createCmsExtensions() {
         Object.freeze({ id: 'sdkOverviewLayout', name: 'SDK 配置总览布局', location: 'SDK / 配置管理 / 配置总览', icon: 'layers' }),
         Object.freeze({ id: 'integrationControl', name: '集成渠道控量展示', location: 'SDK / 集成 / 集成概览', icon: 'settings' }),
         Object.freeze({ id: 'integrationNaming', name: '集成模组渠道命名', location: 'SDK / 集成 / 集成详情', icon: 'layers' }),
-        Object.freeze({ id: 'sdkResourceReplace', name: 'SDK 辅料替换', location: 'SDK / 配置 / 资源及配置详情 / 辅料与辅料2', icon: 'layers' })
+        Object.freeze({ id: 'sdkResourceReplace', name: 'SDK 辅料替换', location: 'SDK / 配置 / 资源及配置详情 / 辅料与辅料2', icon: 'layers' }),
+        Object.freeze({ id: 'moduleEditToolbar', name: '模组编辑工具栏常驻', location: '系统管理 / 模组配置编辑', icon: 'settings' })
     ]);
 
     // Lucide icons (ISC license); kept inline so the userscript works without a CDN.
@@ -1641,6 +1642,68 @@ function createModuleApplyTemplate() {
     }
 
     return { boot, migrateValues, diffSkeleton };
+}
+
+function createModuleEditToolbar() {
+    'use strict';
+
+    const STYLE_ID = 'apicmob-module-edit-toolbar';
+    const TOOLBAR = '[class*="appic-scope-manage-body_top_right-"]';
+    const CONTENT = '[class*="appic-scope-manage-body-content-"]';
+    const HEADER = `[class*="appic-scope-manage-body_top-"]:has(> ${TOOLBAR}):has(+ ${CONTENT})`;
+    // Remove only the header's layout box so sticky positioning can span the editor scroll area.
+    const CSS = `
+        ${HEADER} {
+            display: contents;
+        }
+        ${HEADER} > form {
+            float: left;
+            max-width: 100%;
+            margin: 10px 16px 10px 0;
+        }
+        ${HEADER} > ${TOOLBAR} {
+            float: right;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            box-sizing: border-box;
+            max-width: 100%;
+            padding: 10px 0;
+            background: #fff;
+        }
+        ${HEADER} > ${TOOLBAR} > .el-button {
+            margin-left: 0 !important;
+        }
+        ${HEADER} + ${CONTENT} {
+            clear: both;
+        }
+    `;
+
+    function boot(win, runtime) {
+        const document = win.document;
+        function update() {
+            const active = runtime.isEnabled()
+                && win.location.hash.split('?')[0] === '#/system/custom-configuration/module-edit';
+            const style = document.getElementById(STYLE_ID);
+            if (!active) {
+                if (style) style.remove();
+            } else if (!style && document.head) {
+                const next = document.createElement('style');
+                next.id = STYLE_ID;
+                next.textContent = CSS;
+                document.head.appendChild(next);
+            }
+        }
+        runtime.watch(update);
+        update();
+    }
+
+    return { boot };
 }
 
 function createPlacementBulkUpload() {
@@ -4952,6 +5015,7 @@ function createSdkIntegration() {
         sessionGuard: (runtime) => createSessionGuard().boot(window, runtime),
         reportBack: (runtime) => createDynamicReportBackButton().boot(window, runtime),
         moduleTemplate: (runtime) => createModuleApplyTemplate().boot(runtime),
+        moduleEditToolbar: (runtime) => createModuleEditToolbar().boot(window, runtime),
         placementBulk: (runtime) => createPlacementBulkUpload().boot(window, runtime),
         sdkOverviewLayout: (runtime) => createSdkConfigOverviewLayout().boot(window, runtime),
         sdkResourceReplace: (runtime) => {

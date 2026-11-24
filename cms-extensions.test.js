@@ -43,11 +43,11 @@ function createHarness(initial) {
 test('settings default to enabled and accept only known boolean switches', () => {
     assert.deepEqual(extensions.normalizeSettings(null), {
         version: 1,
-        features: { sessionGuard: true, reportBack: true, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true, integrationControl: true, integrationNaming: true, sdkResourceReplace: true }
+        features: { sessionGuard: true, reportBack: true, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true, integrationControl: true, integrationNaming: true, sdkResourceReplace: true, moduleEditToolbar: true }
     });
     assert.deepEqual(extensions.normalizeSettings({
         features: { reportBack: false, moduleTemplate: 'false', placementBulk: 0, unknown: true }
-    }).features, { sessionGuard: true, reportBack: false, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true, integrationControl: true, integrationNaming: true, sdkResourceReplace: true });
+    }).features, { sessionGuard: true, reportBack: false, moduleTemplate: true, placementBulk: true, sdkOverviewLayout: true, integrationControl: true, integrationNaming: true, sdkResourceReplace: true, moduleEditToolbar: true });
 });
 
 test('malformed or unavailable storage does not prevent default startup', () => {
@@ -104,9 +104,9 @@ test('one failed feature does not prevent other features from starting or updati
     const harness = createHarness();
     harness.factories.reportBack = () => { throw new Error('Failed to boot'); };
     extensions.boot(harness.win, harness.factories);
-    assert.deepEqual(harness.starts, ['sessionGuard', 'moduleTemplate', 'placementBulk', 'sdkOverviewLayout', 'integrationControl', 'integrationNaming', 'sdkResourceReplace']);
+    assert.deepEqual(harness.starts, ['sessionGuard', 'moduleTemplate', 'placementBulk', 'sdkOverviewLayout', 'integrationControl', 'integrationNaming', 'sdkResourceReplace', 'moduleEditToolbar']);
     assert.equal(harness.errors.length, 1);
-    assert.deepEqual(harness.ticks.map(({ id }) => id), ['sessionGuard', 'moduleTemplate', 'placementBulk', 'sdkOverviewLayout', 'integrationControl', 'integrationNaming', 'sdkResourceReplace']);
+    assert.deepEqual(harness.ticks.map(({ id }) => id), ['sessionGuard', 'moduleTemplate', 'placementBulk', 'sdkOverviewLayout', 'integrationControl', 'integrationNaming', 'sdkResourceReplace', 'moduleEditToolbar']);
 });
 
 test('disabled template feature still resumes an unexpired migration for the current module', () => {

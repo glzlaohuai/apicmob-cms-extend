@@ -31,7 +31,7 @@ const factories = [
 const output = `// ==UserScript==
 // @name         CMS 功能扩展
 // @namespace    https://cms.apicmob.com/
-// @version      1.2.18
+// @version      1.2.19
 // @description  整合登录态临时保护、动态报表返回、模组套用模板及工具栏常驻、SDK 广告位批量上传、SDK 配置总览布局、资源引用与辅料批量替换、集成渠道控量和模组渠道命名，提供独立功能开关设置页
 // @author       liulifeng
 // @updateURL    https://raw.githubusercontent.com/glzlaohuai/apicmob-cms-extend/master/cms-extensions.user.js
